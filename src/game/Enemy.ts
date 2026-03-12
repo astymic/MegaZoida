@@ -119,9 +119,14 @@ export class Enemy {
             (this as any)._skeletonMixer.update(dt);
         }
 
-        // Simple rolling animation
-        this.mesh.rotation.x += this.speed * dt * 0.01;
-        this.mesh.rotation.z -= this.speed * dt * 0.01;
+        // Rotate skeleton to face player direction (no tumbling)
+        if (AssetManager.skeletonFbx) {
+            const dx = player.x - this.x;
+            const dz = player.y - this.y;
+            if (dx !== 0 || dz !== 0) {
+                this.mesh.rotation.y = Math.atan2(dx, dz);
+            }
+        }
 
         // Update HP bar
         if (this.hp < this.maxHp && this.hp > 0) {

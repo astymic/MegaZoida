@@ -41,7 +41,7 @@ export class AssetManager {
 
         // --- Load Enemy Skeleton ---
         const skeleton = await loadFbx('/assets/models/lowpolyskeleton_rigged.fbx');
-        skeleton.scale.set(1.0, 1.0, 1.0);
+        skeleton.scale.set(0.5, 0.5, 0.5);
         skeleton.rotation.set(0, 0, 0); // Try zero first — adjust after seeing result
         skeleton.traverse((child) => {
             if ((child as THREE.Mesh).isMesh) {
