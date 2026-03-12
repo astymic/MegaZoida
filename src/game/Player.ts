@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Enemy } from './Enemy';
 import { Weapon } from './weapons/Weapon';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 
 export type HeroType = 'human' | 'knight' | 'archer';
 
@@ -44,6 +45,9 @@ export class Player {
     private directionIndicator: THREE.Mesh;
     private scene: THREE.Scene;
 
+    private mixer?: THREE.AnimationMixer;
+    private actionRun?: THREE.AnimationAction;
+
     constructor(scene: THREE.Scene, x: number, y: number, type: HeroType = 'human') {
         this.scene = scene;
         this.x = x;
@@ -80,6 +84,33 @@ export class Player {
         // Position it "in front" of the sphere on the Z axis
         this.directionIndicator.position.set(0, 0, this.radius);
         this.mesh.add(this.directionIndicator);
+
+        if (this.heroType === 'archer') {
+            material.visible = false;
+            this.directionIndicator.visible = false;
+
+            const loader = new FBXLoader();
+            loader.load('/assets/models/Female1_T_Pose.Fbx', (fbx) => {
+                // Adjust scale and position based on typical mixamo FBX
+                fbx.scale.set(0.2, 0.2, 0.2);
+                fbx.position.y = -this.radius;
+
+                fbx.traverse((child) => {
+                    if ((child as THREE.Mesh).isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+
+                if (fbx.animations && fbx.animations.length > 0) {
+                    this.mixer = new THREE.AnimationMixer(fbx);
+                    this.actionRun = this.mixer.clipAction(fbx.animations[0]);
+                    this.actionRun.play();
+                }
+
+                this.mesh.add(fbx);
+            });
+        }
     }
 
     public update(dt: number, moveVector: { x: number; y: number }, timeSeconds: number, enemies: Enemy[], addProjectile: (p: any) => void, scene: THREE.Scene) {
@@ -104,6 +135,16 @@ export class Player {
         // Sync 3D Mesh position and rotation (yaw)
         this.mesh.position.set(this.x, this.radius, this.y);
         this.mesh.rotation.y = -this.facingAngle + Math.PI / 2; // Offset for atan2 Z-axis correlation
+
+        if (this.mixer) {
+            this.mixer.update(dt);
+        }
+
+        // Handle animation state
+        if (this.actionRun) {
+            const isMoving = moveVector.x !== 0 || moveVector.y !== 0;
+            this.actionRun.setEffectiveWeight(isMoving ? 1 : 0);
+        }
 
         // Handle Weapon Attacks
         if (this.weapons.length > 0) {

@@ -71,11 +71,23 @@ export class Game {
         dirLight.castShadow = true;
         this.scene.add(dirLight);
 
-        // Ground plane
-        const planeGeo = new THREE.PlaneGeometry(10000, 10000);
-        const planeMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        // Ground plane with procedural terrain
+        const planeGeo = new THREE.PlaneGeometry(10000, 10000, 150, 150); // More vertices for displacement
+        const mapTex = this.generateTerrainTexture(false);
+        const dispTex = this.generateTerrainTexture(true);
+
+        const planeMat = new THREE.MeshStandardMaterial({
+            map: mapTex,
+            displacementMap: dispTex,
+            displacementScale: 150, // Height of mountains
+            roughness: 0.8
+        });
         const plane = new THREE.Mesh(planeGeo, planeMat);
         plane.rotation.x = -Math.PI / 2;
+        // The plane physics logic thinks everything is at y=0.
+        // We push the plane down slightly so the player runs "above" the lower parts
+        // but it's a visual hack.
+        plane.position.y = -50;
         plane.receiveShadow = true;
         this.scene.add(plane);
 
@@ -132,6 +144,44 @@ export class Game {
         hud.style.pointerEvents = 'none';
         hud.style.display = 'none'; // Hidden until playing
         this.container.appendChild(hud);
+    }
+
+    private generateTerrainTexture(isDisplacement: boolean = false): THREE.CanvasTexture {
+        const canvas = document.createElement('canvas');
+        canvas.width = 512;
+        canvas.height = 512;
+        const ctx = canvas.getContext('2d')!;
+
+        // Very basic procedural noise (using sine waves)
+        for (let x = 0; x < 512; x++) {
+            for (let y = 0; y < 512; y++) {
+                // Low frequency waves
+                const nx = x * 0.05;
+                const ny = y * 0.05;
+                const wave = (Math.sin(nx) * Math.cos(ny) + 1) / 2;
+
+                // Add some pseudo-random high-frequency noise
+                const detail = Math.random() * 0.2;
+                const val = Math.min(1, wave * 0.8 + detail);
+
+                if (isDisplacement) {
+                    const c = Math.floor(val * 255);
+                    ctx.fillStyle = `rgb(${c},${c},${c})`;
+                } else {
+                    const r = Math.floor(val * 40);
+                    const g = Math.floor(val * 120 + 60);
+                    const b = Math.floor(val * 30);
+                    ctx.fillStyle = `rgb(${r},${g},${b})`;
+                }
+                ctx.fillRect(x, y, 1, 1);
+            }
+        }
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(20, 20); // Tile texture across the entire map
+        return tex;
     }
 
     private updateHUD() {
