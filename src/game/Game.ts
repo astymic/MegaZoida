@@ -429,10 +429,11 @@ export class Game {
         this.camera.position.y = this.player.mesh.position.y + Math.sin(this.cameraPitch) * distance;
         this.camera.lookAt(this.player.x, this.player.mesh.position.y, this.player.y);
 
-        // Faster spawn rate: scales 1.3x every 2 levels
+        // Cap enemies to prevent FPS collapse on mobile (max 30 on screen at once)
+        const MAX_ENEMIES = 30;
         const spawnMultiplier = Math.pow(1.3, Math.floor((this.player.level - 1) / 2));
-        const spawnDelay = Math.max(0.01, 0.5 / spawnMultiplier);
-        if (timeSeconds - this.lastSpawnTime > spawnDelay) {
+        const spawnDelay = Math.max(0.4, 1.5 / spawnMultiplier); // minimum 0.4s between spawns
+        if (timeSeconds - this.lastSpawnTime > spawnDelay && this.enemies.length < MAX_ENEMIES) {
             this.spawnEnemy(timeSeconds);
             this.lastSpawnTime = timeSeconds;
         }

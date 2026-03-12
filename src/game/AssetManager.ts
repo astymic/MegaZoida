@@ -15,16 +15,18 @@ export class AssetManager {
                     if (onProg) onProg(xhr.loaded / xhr.total);
                 }, (err) => {
                     console.error('FBX load error', path, err);
-                    resolve(new THREE.Group()); // empty fallback
+                    resolve(new THREE.Group());
                 });
             });
 
         // --- Load Archer (Chiori) ---
         const chiori = await loadFbx('/assets/models/Chiori/Chiori.fbx', onProgress);
-        chiori.scale.set(2.6, 2.6, 2.6);
-        // Fix Y-up vs Z-up FBX axis mismatch (common with Maya/DAZ exports)
-        chiori.rotation.x = -Math.PI / 2;
-        chiori.rotation.y = 0;
+        // Scale: reasonable human-sized (not 10x - too heavy on GPU)
+        chiori.scale.set(0.5, 0.5, 0.5);
+        // FBX Z-up → Three.js Y-up fix: rotate +90° around X
+        chiori.rotation.x = Math.PI / 2;
+        chiori.rotation.y = Math.PI; // Face forward (away from camera)
+        chiori.rotation.z = 0;
         chiori.traverse((child) => {
             if ((child as THREE.Mesh).isMesh) {
                 child.castShadow = true;
@@ -37,13 +39,15 @@ export class AssetManager {
 
         // --- Load Enemy Skeleton ---
         const skeleton = await loadFbx('/assets/models/lowpolyskeleton_rigged.fbx');
-        skeleton.scale.set(1.8, 1.8, 1.8); // 10x larger
-        skeleton.rotation.x = -Math.PI / 2;
-        skeleton.rotation.y = 0;
+        // Scale: enemy sized (smaller than player)
+        skeleton.scale.set(0.4, 0.4, 0.4);
+        skeleton.rotation.x = Math.PI / 2;
+        skeleton.rotation.y = Math.PI;
+        skeleton.rotation.z = 0;
         skeleton.traverse((child) => {
             if ((child as THREE.Mesh).isMesh) {
-                child.castShadow = true;
-                child.receiveShadow = true;
+                child.castShadow = false; // no shadow on enemies = big perf win
+                child.receiveShadow = false;
             }
         });
         AssetManager.skeletonFbx = skeleton;
@@ -71,7 +75,6 @@ export class AssetManager {
         let mixer: THREE.AnimationMixer | undefined;
         if (AssetManager.skeletonFbx.animations?.length > 0) {
             mixer = new THREE.AnimationMixer(cloned);
-            // Play walk/idle (first animation clip)
             mixer.clipAction(AssetManager.skeletonFbx.animations[0]).play();
         }
 
