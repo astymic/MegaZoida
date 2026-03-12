@@ -8,6 +8,9 @@ import { Chest } from './Chest';
 import { BasicSword } from './weapons/BasicSword';
 import { Bow } from './weapons/Bow';
 import { Staff } from './weapons/Staff';
+import { BananaWeapon } from './weapons/BananaWeapon';
+import { SwordWeapon } from './weapons/SwordWeapon';
+import { BowWeapon } from './weapons/BowWeapon';
 import { Projectile } from './Projectile';
 import { UIManager } from './UIManager';
 
@@ -239,7 +242,16 @@ export class Game {
         if (hud) hud.style.display = 'block';
 
         this.player = new Player(this.scene, 0, 0, heroType);
-        this.player.addWeapon(new BasicSword());
+
+        // Equip Starting Weapons — meshes are self-managed lazily inside each weapon's tryAttack
+        if (heroType === 'human') {
+            this.player.addWeapon(new BananaWeapon());
+        } else if (heroType === 'knight') {
+            this.player.addWeapon(new SwordWeapon());
+        } else if (heroType === 'archer') {
+            this.player.addWeapon(new BowWeapon());
+        }
+
         this.player.onLevelUp = () => this.handleLevelUp();
 
         this.state = GameState.PLAYING;

@@ -9,9 +9,9 @@ export class AssetManager {
         return new Promise((resolve) => {
             const loader = new FBXLoader();
 
-            // The textures should be resolved automatically in Female1_T_Pose.fbm if they exist.
-            loader.load('/assets/models/T-Pose Nude/Female1_T_Pose.Fbx', (fbx) => {
-                // Increased 1.3x from original 0.2
+            // The textures should be resolved automatically in the tex folder if they exist.
+            loader.load('/assets/models/Chiori/Chiori.fbx', (fbx) => {
+                // Determine scale based on new model (usually 0.2 is a good Mixamo default, but we'll try 0.26 as requested in phase 9)
                 fbx.scale.set(0.26, 0.26, 0.26);
 
                 // Fix "face down in floor" issue common with FBX imports
@@ -22,6 +22,12 @@ export class AssetManager {
                     if ((child as THREE.Mesh).isMesh) {
                         child.castShadow = true;
                         child.receiveShadow = true;
+
+                        // Disable specular highlights which sometimes break cartoon FBX models
+                        if ((child as THREE.Mesh).material) {
+                            const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+                            mat.roughness = 0.8;
+                        }
                     }
                 });
 
@@ -44,6 +50,7 @@ export class AssetManager {
 
         let mixer;
         let actionRun;
+        // Search if Chiori has baked animations
         if (AssetManager.archerFbx.animations && AssetManager.archerFbx.animations.length > 0) {
             mixer = new THREE.AnimationMixer(cloned);
             actionRun = mixer.clipAction(AssetManager.archerFbx.animations[0]);
