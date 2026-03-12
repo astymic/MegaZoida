@@ -48,6 +48,9 @@ export class Game {
     private terrainMeshes: THREE.Mesh[] = [];  // All meshes to Raycast against
     private terrainRaycaster = new THREE.Raycaster();
 
+    // Static obstacle colliders (trees, rocks, etc.) — stored as {x,z,r}
+    private obstacles: Array<{ x: number; z: number; r: number }> = [];
+
     // TPS Camera Control
     private cameraAngle: number = 0;
     private cameraPitch: number = Math.PI / 3.5; // ~51 degrees — good third-person view
@@ -221,6 +224,13 @@ export class Game {
                         c.castShadow = false;
                         c.receiveShadow = false;
                         this.scene.add(c);
+
+                        // Register collision circle for trees/rocks (skip grass/flowers — too small)
+                        const isLargeObject = def.path.includes('Tree') || def.path.includes('Rock');
+                        if (isLargeObject) {
+                            const collRadius = def.scale * 80; // approximate trunk radius
+                            this.obstacles.push({ x: c.position.x, z: c.position.z, r: collRadius });
+                        }
                     }
                 } catch (e) {
                     console.warn(`Could not load decoration: ${def.path}`, e);
@@ -425,6 +435,21 @@ export class Game {
         // Snap Player to Terrain
         const ph = this.getTerrainHeightAt(this.player.x, this.player.y);
         this.player.mesh.position.y = ph + this.player.radius;
+
+        // Obstacle collision: push player out of trees/rocks
+        const pr = this.player.radius + 5; // player collision radius
+        for (const obs of this.obstacles) {
+            const dx = this.player.x - obs.x;
+            const dz = this.player.y - obs.z; // player.y maps to world Z
+            const distSq = dx * dx + dz * dz;
+            const minDist = pr + obs.r;
+            if (distSq < minDist * minDist && distSq > 0) {
+                const dist = Math.sqrt(distSq);
+                const overlap = minDist - dist;
+                this.player.x += (dx / dist) * overlap;
+                this.player.y += (dz / dist) * overlap;
+            }
+        }
 
         // Camera follow player (TPS View)
         const distance = 250;
