@@ -72,7 +72,7 @@ export class Game {
         this.scene.add(dirLight);
 
         // Ground plane with procedural terrain
-        const planeGeo = new THREE.PlaneGeometry(10000, 10000, 150, 150); // More vertices for displacement
+        const planeGeo = new THREE.PlaneGeometry(10000, 10000, 250, 250); // More vertices for displacement
         const mapTex = this.generateTerrainTexture(false);
         const dispTex = this.generateTerrainTexture(true);
 
@@ -158,8 +158,8 @@ export class Game {
                 const ny = y * 0.05;
                 const wave = (Math.sin(nx) * Math.cos(ny) + 1) / 2;
 
-                // Add some pseudo-random high-frequency noise
-                const detail = Math.random() * 0.2;
+                // Add some pseudo-random high-frequency noise ONLY for color
+                const detail = isDisplacement ? 0 : Math.random() * 0.2;
                 const val = Math.min(1, wave * 0.8 + detail);
 
                 if (isDisplacement) {
@@ -197,8 +197,8 @@ export class Game {
         const texX = (localX / tileScale) * 512;
         const texY = (localZ / tileScale) * 512;
 
-        const nx = Math.floor(texX) * 0.05;
-        const ny = Math.floor(texY) * 0.05;
+        const nx = texX * 0.05;
+        const ny = texY * 0.05;
         const wave = (Math.sin(nx) * Math.cos(ny) + 1) / 2;
 
         // Exact same equation without the random detail so it's smooth

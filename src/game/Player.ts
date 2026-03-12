@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Enemy } from './Enemy';
 import { Weapon } from './weapons/Weapon';
-import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { AssetManager } from './AssetManager';
 
 export type HeroType = 'human' | 'knight' | 'archer';
 
@@ -89,31 +89,17 @@ export class Player {
             material.visible = false;
             this.directionIndicator.visible = false;
 
-            const loader = new FBXLoader();
-            loader.load('/assets/models/Female1_T_Pose.Fbx', (fbx) => {
-                // Adjust scale and position based on typical mixamo FBX
-                fbx.scale.set(0.2, 0.2, 0.2);
-                fbx.position.y = -this.radius;
+            const archerData = AssetManager.getArcherModel();
 
-                // Fix "face down in floor" issue common with FBX imports
-                fbx.rotation.x = Math.PI / 2;
-                fbx.rotation.y = Math.PI;
+            // Adjust to the player bounds
+            archerData.model.position.y = -this.radius;
 
-                fbx.traverse((child) => {
-                    if ((child as THREE.Mesh).isMesh) {
-                        child.castShadow = true;
-                        child.receiveShadow = true;
-                    }
-                });
+            if (archerData.mixer && archerData.actionRun) {
+                this.mixer = archerData.mixer;
+                this.actionRun = archerData.actionRun;
+            }
 
-                if (fbx.animations && fbx.animations.length > 0) {
-                    this.mixer = new THREE.AnimationMixer(fbx);
-                    this.actionRun = this.mixer.clipAction(fbx.animations[0]);
-                    this.actionRun.play();
-                }
-
-                this.mesh.add(fbx);
-            });
+            this.mesh.add(archerData.model);
         }
     }
 
