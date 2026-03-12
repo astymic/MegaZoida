@@ -21,7 +21,7 @@ export class AssetManager {
 
         // --- Load Archer (Chiori) ---
         const chiori = await loadFbx('/assets/models/Chiori/Chiori.fbx', onProgress);
-        chiori.scale.set(0.26, 0.26, 0.26);
+        chiori.scale.set(2.6, 2.6, 2.6);
         // Fix Y-up vs Z-up FBX axis mismatch (common with Maya/DAZ exports)
         chiori.rotation.x = -Math.PI / 2;
         chiori.rotation.y = 0;
@@ -37,7 +37,7 @@ export class AssetManager {
 
         // --- Load Enemy Skeleton ---
         const skeleton = await loadFbx('/assets/models/lowpolyskeleton_rigged.fbx');
-        skeleton.scale.set(0.18, 0.18, 0.18); // slightly smaller than player
+        skeleton.scale.set(1.8, 1.8, 1.8); // 10x larger
         skeleton.rotation.x = -Math.PI / 2;
         skeleton.rotation.y = 0;
         skeleton.traverse((child) => {
