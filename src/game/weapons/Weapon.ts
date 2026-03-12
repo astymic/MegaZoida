@@ -21,7 +21,12 @@ export abstract class Weapon {
 
     // Returns true if the weapon actually fired/attacked
     public tryAttack(_dt: number, timeSeconds: number, player: Player, enemies: Enemy[], addProjectile: (p: any) => void, scene: any): boolean {
-        const cooldown = 1 / (player.attackSpeed * this.data.speedMult);
+        let archerMult = 1.0;
+        // The user specified 'Archer has increased speed ONLY for ranged weapons (bow/staff)'. We rely on `type` here.
+        if (player.heroType === 'archer' && (this.data.type === 'projectile' || this.data.type === 'magic')) {
+            archerMult = 1.5;
+        }
+        const cooldown = 1 / (player.attackSpeed * this.data.speedMult * archerMult);
         if (timeSeconds - this.lastAttackTime >= cooldown) {
             const attacked = this.attack(timeSeconds, player, enemies, addProjectile, scene);
             if (attacked) {

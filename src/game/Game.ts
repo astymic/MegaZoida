@@ -11,6 +11,12 @@ import { Staff } from './weapons/Staff';
 import { Projectile } from './Projectile';
 import { UIManager } from './UIManager';
 
+export enum GameState {
+    MAIN_MENU,
+    PLAYING,
+    GAME_OVER
+}
+
 export class Game {
     private container: HTMLElement;
     private scene: THREE.Scene;
@@ -21,8 +27,9 @@ export class Game {
     private lastTime: number = 0;
     private inputManager: InputManager;
     private uiManager: UIManager;
+    private state: GameState = GameState.MAIN_MENU;
 
-    private player: Player;
+    private player!: Player;
     private enemies: Enemy[] = [];
     private expDrops: ExpDrop[] = [];
     private coinDrops: CoinDrop[] = [];
@@ -75,15 +82,9 @@ export class Game {
         this.inputManager = new InputManager();
         this.uiManager = new UIManager();
 
-        // Initialize Player in the center
-        this.player = new Player(this.scene, 0, 0);
-        this.player.addWeapon(new BasicSword());
-
-        this.player.onLevelUp = () => this.handleLevelUp();
-
         window.addEventListener('resize', () => this.onWindowResize());
 
-        // Add overlay for HUD
+        // Setup HUD (initially hidden)
         this.setupHUD();
 
         // Setup Camera Control (Drag to rotate)
@@ -129,10 +130,12 @@ export class Game {
         hud.style.fontFamily = 'sans-serif';
         hud.style.fontSize = '20px';
         hud.style.pointerEvents = 'none';
+        hud.style.display = 'none'; // Hidden until playing
         this.container.appendChild(hud);
     }
 
     private updateHUD() {
+        if (this.state !== GameState.PLAYING) return;
         const hud = document.getElementById('hud');
         if (hud) {
             hud.innerHTML = `
@@ -153,8 +156,71 @@ export class Game {
     public start() {
         if (this.isRunning) return;
         this.isRunning = true;
+        this.state = GameState.MAIN_MENU;
+        this.uiManager.showMainMenu((heroType) => this.initGame(heroType));
+    }
+
+    private initGame(heroType: 'human' | 'knight' | 'archer') {
+        const hud = document.getElementById('hud');
+        if (hud) hud.style.display = 'block';
+
+        this.player = new Player(this.scene, 0, 0, heroType);
+        this.player.addWeapon(new BasicSword());
+        this.player.onLevelUp = () => this.handleLevelUp();
+
+        this.state = GameState.PLAYING;
         this.lastTime = performance.now();
         requestAnimationFrame((time) => this.loop(time));
+    }
+
+    private resetGame(returnToMenu: boolean = true) {
+        // Clear entities
+        this.enemies.forEach(e => e.remove());
+        this.expDrops.forEach(e => e.remove());
+        this.coinDrops.forEach(c => c.remove());
+        this.chests.forEach(c => c.remove());
+        this.projectiles.forEach(p => p.remove());
+        // Remove player mesh
+        if (this.player && this.player.mesh) {
+            this.scene.remove(this.player.mesh);
+            // Quick cleanup of children
+            while (this.player.mesh.children.length > 0) {
+                this.player.mesh.remove(this.player.mesh.children[0]);
+            }
+        }
+
+        this.enemies = [];
+        this.expDrops = [];
+        this.coinDrops = [];
+        this.chests = [];
+        this.projectiles = [];
+        this.lastSpawnTime = 0;
+        this.lastChestSpawnTime = 0;
+
+        const hud = document.getElementById('hud');
+
+        if (returnToMenu) {
+            if (hud) hud.style.display = 'none';
+            this.state = GameState.MAIN_MENU;
+            this.uiManager.showMainMenu((heroType) => this.initGame(heroType));
+        } else {
+            // Instantly play with the same hero
+            this.initGame(this.player.heroType);
+        }
+    }
+
+    private handleGameOver() {
+        this.state = GameState.GAME_OVER;
+        const hud = document.getElementById('hud');
+        if (hud) hud.style.display = 'none';
+
+        this.uiManager.showGameOver(
+            this.player.level,
+            this.player.coinsEarned,
+            this.player.enemiesKilled,
+            () => this.resetGame(false), // Instant Restart
+            () => this.resetGame(true)   // Return to Menu
+        );
     }
 
     public stop() {
@@ -211,7 +277,7 @@ export class Game {
     }
 
     private loop(time: number) {
-        if (!this.isRunning || this.isPaused) return;
+        if (!this.isRunning || this.isPaused || this.state !== GameState.PLAYING) return;
 
         const deltaTime = (time - this.lastTime) / 1000;
         this.lastTime = time;
@@ -306,6 +372,7 @@ export class Game {
             }
 
             if (enemy.hp <= 0) {
+                this.player.enemiesKilled++;
                 this.expDrops.push(new ExpDrop(this.scene, enemy.x, enemy.y, enemy.xpYield));
 
                 // 100% coin drop. Multiplier based on bosses killed (levels / 10)
@@ -315,6 +382,12 @@ export class Game {
                 enemy.remove();
                 this.enemies.splice(i, 1);
             }
+        }
+
+        // Check death
+        if (this.player.hp <= 0) {
+            this.handleGameOver();
+            return;
         }
 
         // Enemy-Enemy Soft Collisions
@@ -373,7 +446,7 @@ export class Game {
             const distSq = dx * dx + dy * dy;
 
             if (distSq <= pickupRadius * pickupRadius) {
-                this.player.coins += drop.amount;
+                this.player.addCoins(drop.amount);
                 drop.remove();
                 this.coinDrops.splice(i, 1);
             } else if (distSq <= magnetRadius * magnetRadius) {

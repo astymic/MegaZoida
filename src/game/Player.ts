@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { Enemy } from './Enemy';
 import { Weapon } from './weapons/Weapon';
 
+export type HeroType = 'human' | 'knight' | 'archer';
+
 export class Player {
     public x: number;
     public y: number;
@@ -17,6 +19,10 @@ export class Player {
     public xpToNextLevel: number = 10;
     public coins: number = 0;
 
+    // Run Stats
+    public enemiesKilled: number = 0;
+    public coinsEarned: number = 0;
+
     public moveSpeed: number = 200; // pixels per second
     public attackSpeed: number = 1.0; // attacks per second
     public attackDamage: number = 10;
@@ -25,6 +31,7 @@ export class Player {
 
     public weapons: Weapon[] = [];
     public maxWeapons: number = 6;
+    public heroType: HeroType;
 
     // State
     private lastAttackTime: number = 0;
@@ -37,10 +44,26 @@ export class Player {
     private directionIndicator: THREE.Mesh;
     private scene: THREE.Scene;
 
-    constructor(scene: THREE.Scene, x: number, y: number) {
+    constructor(scene: THREE.Scene, x: number, y: number, type: HeroType = 'human') {
         this.scene = scene;
         this.x = x;
         this.y = y;
+        this.heroType = type;
+
+        // Apply Hero scaling
+        if (type === 'knight') {
+            this.maxHp = 150;
+            this.hp = 150;
+            this.defense = 5;
+            this.attackDamage = 15;
+            this.moveSpeed = 160;
+            this.attackSpeed = 0.8;
+        } else if (type === 'archer') {
+            this.maxHp = 80;
+            this.hp = 80;
+            this.moveSpeed = 240;
+            this.attackSpeed = 1.3;
+        }
 
         const geometry = new THREE.SphereGeometry(this.radius, 32, 32);
         const material = new THREE.MeshStandardMaterial({ color: 0x4a90e2 });
@@ -129,6 +152,11 @@ export class Player {
         if (this.xp >= this.xpToNextLevel) {
             this.levelUp();
         }
+    }
+
+    public addCoins(amount: number) {
+        this.coins += amount;
+        this.coinsEarned += amount;
     }
 
     private levelUp() {

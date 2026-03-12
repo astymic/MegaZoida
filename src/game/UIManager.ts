@@ -19,6 +19,133 @@ export class UIManager {
         document.body.appendChild(this.container);
     }
 
+    public showMainMenu(onSelectHero: (type: 'human' | 'knight' | 'archer') => void) {
+        this.container.innerHTML = '';
+        this.container.style.pointerEvents = 'auto';
+        this.container.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'; // Dark background
+
+        const menu = document.createElement('div');
+        menu.style.background = '#2c3e50';
+        menu.style.padding = '40px';
+        menu.style.borderRadius = '15px';
+        menu.style.border = '4px solid #f1c40f';
+        menu.style.textAlign = 'center';
+        menu.style.color = '#fff';
+
+        const title = document.createElement('h1');
+        title.innerText = 'MEGAZOIDA';
+        title.style.fontSize = '48px';
+        title.style.margin = '0 0 10px 0';
+        title.style.color = '#e74c3c';
+        title.style.textShadow = '2px 2px 0 #c0392b, -2px -2px 0 #c0392b, 2px -2px 0 #c0392b, -2px 2px 0 #c0392b';
+        menu.appendChild(title);
+
+        const sub = document.createElement('p');
+        sub.innerText = 'Choose Your Hero';
+        sub.style.marginBottom = '30px';
+        menu.appendChild(sub);
+
+        const grid = document.createElement('div');
+        grid.style.display = 'flex';
+        grid.style.gap = '20px';
+        grid.style.justifyContent = 'center';
+
+        const heroes = [
+            { id: 'human', name: '🧍 Human', desc: 'Balanced warrior.\nStandard stats.' },
+            { id: 'knight', name: '🛡️ Knight', desc: 'Tanky bruiser.\nHigh HP & Damage.\nSlow Speed.' },
+            { id: 'archer', name: '🏹 Archer', desc: 'Swift tracker.\nFast Move Speed.\nRanged Attack Speed++' }
+        ];
+
+        heroes.forEach(h => {
+            const btn = document.createElement('button');
+            btn.style.padding = '20px';
+            btn.style.backgroundColor = '#34495e';
+            btn.style.color = '#fff';
+            btn.style.border = '2px solid #7f8c8d';
+            btn.style.borderRadius = '10px';
+            btn.style.cursor = 'pointer';
+            btn.style.display = 'flex';
+            btn.style.flexDirection = 'column';
+            btn.style.alignItems = 'center';
+            btn.style.width = '150px';
+
+            btn.innerHTML = `<h3 style="margin:0 0 10px 0">${h.name}</h3><p style="font-size:12px; margin:0">${h.desc.replace(/\n/g, '<br>')}</p>`;
+
+            btn.onmouseenter = () => btn.style.backgroundColor = '#2980b9';
+            btn.onmouseleave = () => btn.style.backgroundColor = '#34495e';
+
+            btn.onclick = () => {
+                this.closeUI();
+                onSelectHero(h.id as any);
+            };
+
+            grid.appendChild(btn);
+        });
+
+        menu.appendChild(grid);
+        this.container.appendChild(menu);
+    }
+
+    public showGameOver(level: number, coins: number, kills: number, onRestart: () => void, onMenu: () => void) {
+        this.container.innerHTML = '';
+        this.container.style.pointerEvents = 'auto';
+        this.container.style.backgroundColor = 'rgba(192, 57, 43, 0.7)'; // Bloody background
+
+        const menu = document.createElement('div');
+        menu.style.background = '#2c3e50';
+        menu.style.padding = '40px';
+        menu.style.borderRadius = '10px';
+        menu.style.border = '2px solid #e74c3c';
+        menu.style.textAlign = 'center';
+        menu.style.color = '#fff';
+
+        menu.innerHTML = `
+            <h1 style="color: #e74c3c; font-size: 40px; margin-top: 0;">YOU DIED</h1>
+            <div style="font-size: 20px; line-height: 1.6; margin-bottom: 30px;">
+                <p>Level Reached: <strong>${level}</strong></p>
+                <p>Enemies Killed: <strong>${kills} 💀</strong></p>
+                <p>Gold Earned: <strong>${coins} 🪙</strong></p>
+            </div>
+        `;
+
+        const btnRow = document.createElement('div');
+        btnRow.style.display = 'flex';
+        btnRow.style.gap = '20px';
+        btnRow.style.justifyContent = 'center';
+
+        const retry = document.createElement('button');
+        retry.innerText = '🔄 Restart Run';
+        retry.style.padding = '15px 30px';
+        retry.style.backgroundColor = '#27ae60';
+        retry.style.color = '#fff';
+        retry.style.border = 'none';
+        retry.style.borderRadius = '5px';
+        retry.style.cursor = 'pointer';
+        retry.onclick = () => {
+            this.closeUI();
+            onRestart();
+        };
+
+        const mainMenu = document.createElement('button');
+        mainMenu.innerText = '☰ Main Menu';
+        mainMenu.style.padding = '15px 30px';
+        mainMenu.style.backgroundColor = '#7f8c8d';
+        mainMenu.style.color = '#fff';
+        mainMenu.style.border = 'none';
+        mainMenu.style.borderRadius = '5px';
+        mainMenu.style.cursor = 'pointer';
+        mainMenu.onclick = () => {
+            this.closeUI();
+            onMenu();
+        };
+
+        btnRow.appendChild(retry);
+        btnRow.appendChild(mainMenu);
+        menu.appendChild(btnRow);
+
+        this.container.appendChild(menu);
+    }
+
     public showLevelUp(player: Player, onChoiceMade: () => void) {
         this.container.innerHTML = ''; // clear
         this.container.style.pointerEvents = 'auto'; // intercept clicks
