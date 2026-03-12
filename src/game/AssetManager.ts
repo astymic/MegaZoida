@@ -14,9 +14,10 @@ export class AssetManager {
                 // Determine scale based on new model (usually 0.2 is a good Mixamo default, but we'll try 0.26 as requested in phase 9)
                 fbx.scale.set(0.26, 0.26, 0.26);
 
-                // Fix "face down in floor" issue common with FBX imports
-                fbx.rotation.x = Math.PI / 2;
-                fbx.rotation.y = Math.PI;
+                // Fix Y-up vs Z-up FBX axis mismatch (common with Maya/DAZ exports)
+                // Negative PI/2 on X rotates Z-up model to Y-up (Three.js coordinate system)
+                fbx.rotation.x = -Math.PI / 2;
+                fbx.rotation.y = 0;
 
                 fbx.traverse((child) => {
                     if ((child as THREE.Mesh).isMesh) {

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { InputManager } from './InputManager';
 import { Player } from './Player';
 import { Enemy } from './Enemy';
@@ -43,6 +44,10 @@ export class Game {
     private lastChestSpawnTime: number = 0;
     private isPaused: boolean = false;
 
+    // Terrain
+    private terrainMeshes: THREE.Mesh[] = [];  // All meshes to Raycast against
+    private terrainRaycaster = new THREE.Raycaster();
+
     // TPS Camera Control
     private cameraAngle: number = 0;
     private cameraPitch: number = Math.PI / 6; // ~30 degrees
@@ -74,23 +79,8 @@ export class Game {
         dirLight.castShadow = true;
         this.scene.add(dirLight);
 
-        // Ground plane with procedural terrain
-        const planeGeo = new THREE.PlaneGeometry(10000, 10000, 250, 250); // More vertices for displacement
-        const mapTex = this.generateTerrainTexture(false);
-        const dispTex = this.generateTerrainTexture(true);
-
-        const planeMat = new THREE.MeshStandardMaterial({
-            map: mapTex,
-            displacementMap: dispTex,
-            displacementScale: 60, // Much flatter terrain
-            roughness: 0.8
-        });
-        const plane = new THREE.Mesh(planeGeo, planeMat);
-        plane.rotation.x = -Math.PI / 2;
-        // Note: The physical actual floor is at y=0, displaced up to y=60. 
-        // We will mathematically calculate the height in the update loop instead of pushing it down.
-        plane.receiveShadow = true;
-        this.scene.add(plane);
+        // Ground + Mountain FBX terrain; loaded asynchronously
+        this.loadMountainTerrain();
 
         this.inputManager = new InputManager();
         this.uiManager = new UIManager();
@@ -147,68 +137,102 @@ export class Game {
         this.container.appendChild(hud);
     }
 
-    private generateTerrainTexture(isDisplacement: boolean = false): THREE.CanvasTexture {
-        const canvas = document.createElement('canvas');
-        canvas.width = 512;
-        canvas.height = 512;
-        const ctx = canvas.getContext('2d')!;
+    private async loadMountainTerrain() {
+        const loader = new FBXLoader();
 
-        // Very basic procedural noise (using sine waves)
-        for (let x = 0; x < 512; x++) {
-            for (let y = 0; y < 512; y++) {
-                // Low frequency waves
-                const nx = x * 0.05;
-                const ny = y * 0.05;
-                const wave = (Math.sin(nx) * Math.cos(ny) + 1) / 2;
+        // Helper to load one FBX and register its geometry as terrain/decoration
+        const load = (path: string): Promise<THREE.Group> => new Promise((res, rej) =>
+            loader.load(path, res, undefined, rej)
+        );
 
-                // Add some pseudo-random high-frequency noise ONLY for color
-                const detail = isDisplacement ? 0 : Math.random() * 0.2;
-                const val = Math.min(1, wave * 0.8 + detail);
+        // --- Base ground (flat fallback while FBX loads + always-present floor) ---
+        const groundGeo = new THREE.PlaneGeometry(20000, 20000);
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x3a7d44, roughness: 0.9 });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        this.scene.add(ground);
+        this.terrainMeshes.push(ground);
 
-                if (isDisplacement) {
-                    const c = Math.floor(val * 255);
-                    ctx.fillStyle = `rgb(${c},${c},${c})`;
-                } else {
-                    const r = Math.floor(val * 40);
-                    const g = Math.floor(val * 120 + 60);
-                    const b = Math.floor(val * 30);
-                    ctx.fillStyle = `rgb(${r},${g},${b})`;
+        // Add fog for depth
+        this.scene.fog = new THREE.FogExp2(0x87ceeb, 0.0003);
+        this.scene.background = new THREE.Color(0x87ceeb); // Sky blue
+
+        try {
+            // Load the Mountain01.fbx — tile 9 copies in a 3x3 grid
+            const mountainFbx = await load('/assets/models/Mountain/Mountain01.fbx');
+            const s = 3.0; // scale factor
+            const tileSize = 1500; // world units between tile centers
+
+            for (let tx = -1; tx <= 1; tx++) {
+                for (let tz = -1; tz <= 1; tz++) {
+                    const clone = mountainFbx.clone();
+                    clone.scale.set(s, s, s);
+                    clone.position.set(tx * tileSize, 0, tz * tileSize);
+                    clone.receiveShadow = true;
+                    clone.castShadow = true;
+                    this.scene.add(clone);
+
+                    // Register every mesh for raycasting
+                    clone.traverse((child) => {
+                        if ((child as THREE.Mesh).isMesh) {
+                            const m = child as THREE.Mesh;
+                            m.receiveShadow = true;
+                            m.castShadow = true;
+                            this.terrainMeshes.push(m);
+                        }
+                    });
                 }
-                ctx.fillRect(x, y, 1, 1);
             }
-        }
 
-        const tex = new THREE.CanvasTexture(canvas);
-        tex.wrapS = THREE.RepeatWrapping;
-        tex.wrapT = THREE.RepeatWrapping;
-        tex.repeat.set(20, 20); // Tile texture across the entire map
-        return tex;
+            // --- Decorations: scatter trees, rocks, grass around the map ---
+            const decorFiles = [
+                { path: '/assets/models/Mountain/Tree01.fbx', count: 60, scale: 2.5 },
+                { path: '/assets/models/Mountain/Rock01.fbx', count: 40, scale: 2.0 },
+                { path: '/assets/models/Mountain/Rock02.fbx', count: 30, scale: 1.8 },
+                { path: '/assets/models/Mountain/Bush01.fbx', count: 50, scale: 2.0 },
+                { path: '/assets/models/Mountain/Grass01.fbx', count: 80, scale: 1.5 },
+                { path: '/assets/models/Mountain/Flower01.fbx', count: 40, scale: 1.5 },
+            ];
+
+            for (const def of decorFiles) {
+                try {
+                    const fbx = await load(def.path);
+                    for (let i = 0; i < def.count; i++) {
+                        const c = fbx.clone();
+                        c.scale.set(def.scale, def.scale, def.scale);
+                        // Scatter in a ring away from player spawn (center)
+                        const angle = Math.random() * Math.PI * 2;
+                        const dist = 400 + Math.random() * 3500;
+                        c.position.set(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
+                        c.rotation.y = Math.random() * Math.PI * 2;
+                        c.receiveShadow = true;
+                        c.castShadow = true;
+                        this.scene.add(c);
+                    }
+                } catch (e) {
+                    console.warn(`Could not load decoration: ${def.path}`, e);
+                }
+            }
+
+        } catch (e) {
+            console.warn('Mountain01.fbx failed to load, using flat ground fallback', e);
+        }
     }
 
-    // Mathematical representation of the terrain height to snap entities to the floor
+    // Raycaster-based height: shoot ray down from sky and find surface below (x,z)
     public getTerrainHeightAt(x: number, z: number): number {
-        // We tile the 512x512 canvas 20 times across 10000x10000 units.
-        // This means one tile is 500x500 units wide.
-        const tileScale = 500;
+        if (this.terrainMeshes.length === 0) return 0;
 
-        // Map world x,z to local tile coordinates (0 to 512)
-        // Keep it positive for modulo
-        let localX = ((x % tileScale) + tileScale) % tileScale;
-        let localZ = ((z % tileScale) + tileScale) % tileScale;
+        const origin = new THREE.Vector3(x, 2000, z);
+        const direction = new THREE.Vector3(0, -1, 0);
+        this.terrainRaycaster.set(origin, direction);
 
-        // Scale to 0-512 to match the texture generation loop
-        const texX = (localX / tileScale) * 512;
-        const texY = (localZ / tileScale) * 512;
-
-        const nx = texX * 0.05;
-        const ny = texY * 0.05;
-        const wave = (Math.sin(nx) * Math.cos(ny) + 1) / 2;
-
-        // Exact same equation without the random detail so it's smooth
-        const val = Math.min(1, wave * 0.8);
-
-        // Height = value * displacementScale
-        return val * 60;
+        const hits = this.terrainRaycaster.intersectObjects(this.terrainMeshes, false);
+        if (hits.length > 0) {
+            return hits[0].point.y;
+        }
+        return 0; // fallback to ground
     }
 
     private updateHUD() {
