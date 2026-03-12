@@ -95,6 +95,10 @@ export class Player {
                 fbx.scale.set(0.2, 0.2, 0.2);
                 fbx.position.y = -this.radius;
 
+                // Fix "face down in floor" issue common with FBX imports
+                fbx.rotation.x = Math.PI / 2;
+                fbx.rotation.y = Math.PI;
+
                 fbx.traverse((child) => {
                     if ((child as THREE.Mesh).isMesh) {
                         child.castShadow = true;

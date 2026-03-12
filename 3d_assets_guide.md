@@ -54,16 +54,35 @@ loader.load(
 );
 ```
 
-### Как работать с анимациями?
-Если вы скачали модель с запеченными анимациями (бег, атака, смерть), загрузчик вернет их в массиве `gltf.animations`. 
-Вам понадобится `THREE.AnimationMixer` чтобы проигрывать их внутри метода `update(dt)`:
+### Как работать с анимациями? (Mixamo)
+Часто при скачивании `FBX` или `GLTF` моделей (особенно с Mixamo) модель загружается либо без анимаций, либо лежит лицом в пол.
+
+**Решение проблемы "Лицом в пол":**
 ```typescript
+fbx.rotation.x = Math.PI / 2;
+// Если персонаж стоит к вам задом:
+fbx.rotation.y = Math.PI; 
+```
+
+**Добавление анимации к статической модели (.Fbx):**
+1. Загрузите вашего персонажа (например, в T-Pose) на сайт Mixamo.com.
+2. Найдите нужную анимацию (например, Running) и нажмите Download. Убедитесь, что в опциях выбрано **"With Skin"** и формат **"FBX (for Unity/Binary)"**.
+3. Если загрузчик вернет ее в массиве `animations`, вам понадобится `THREE.AnimationMixer` чтобы проигрывать их внутри метода `update(dt)`.
+
+```typescript
+// Сохраните переменные в классе:
+// private mixer?: THREE.AnimationMixer;
+// private actionRun?: THREE.AnimationAction;
+
 this.mixer = new THREE.AnimationMixer(model);
-this.actionRun = this.mixer.clipAction(gltf.animations[0]); // Пример: анимация бега
+this.actionRun = this.mixer.clipAction(gltf.animations[0]); // Индекс 0 - обычно первая запеченная анимация бега
 this.actionRun.play();
 
-// Затем где-то в функции update(dt) писать:
+// Затем где-то в функции ВАШЕГО ИГРОВОГО ЦИКЛА (update) писать:
 if (this.mixer) this.mixer.update(dt);
+
+// Вы можете останавливать/запускать вес анимации при беге (1 = бежит, 0 = стоит):
+// this.actionRun.setEffectiveWeight(isMoving ? 1 : 0);
 ```
 
 ---

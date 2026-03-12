@@ -79,15 +79,13 @@ export class Game {
         const planeMat = new THREE.MeshStandardMaterial({
             map: mapTex,
             displacementMap: dispTex,
-            displacementScale: 150, // Height of mountains
+            displacementScale: 60, // Much flatter terrain
             roughness: 0.8
         });
         const plane = new THREE.Mesh(planeGeo, planeMat);
         plane.rotation.x = -Math.PI / 2;
-        // The plane physics logic thinks everything is at y=0.
-        // We push the plane down slightly so the player runs "above" the lower parts
-        // but it's a visual hack.
-        plane.position.y = -50;
+        // Note: The physical actual floor is at y=0, displaced up to y=60. 
+        // We will mathematically calculate the height in the update loop instead of pushing it down.
         plane.receiveShadow = true;
         this.scene.add(plane);
 
@@ -182,6 +180,32 @@ export class Game {
         tex.wrapT = THREE.RepeatWrapping;
         tex.repeat.set(20, 20); // Tile texture across the entire map
         return tex;
+    }
+
+    // Mathematical representation of the terrain height to snap entities to the floor
+    public getTerrainHeightAt(x: number, z: number): number {
+        // We tile the 512x512 canvas 20 times across 10000x10000 units.
+        // This means one tile is 500x500 units wide.
+        const tileScale = 500;
+
+        // Map world x,z to local tile coordinates (0 to 512)
+        // Keep it positive for modulo
+        let localX = ((x % tileScale) + tileScale) % tileScale;
+        let localZ = ((z % tileScale) + tileScale) % tileScale;
+
+        // Scale to 0-512 to match the texture generation loop
+        const texX = (localX / tileScale) * 512;
+        const texY = (localZ / tileScale) * 512;
+
+        const nx = Math.floor(texX) * 0.05;
+        const ny = Math.floor(texY) * 0.05;
+        const wave = (Math.sin(nx) * Math.cos(ny) + 1) / 2;
+
+        // Exact same equation without the random detail so it's smooth
+        const val = Math.min(1, wave * 0.8);
+
+        // Height = value * displacementScale
+        return val * 60;
     }
 
     private updateHUD() {
@@ -350,12 +374,16 @@ export class Game {
             this.projectiles.push(p);
         }, this.scene);
 
+        // Snap Player to Terrain
+        const ph = this.getTerrainHeightAt(this.player.x, this.player.y);
+        this.player.mesh.position.y = ph + this.player.radius;
+
         // Camera follow player (TPS View)
         const distance = 250;
         this.camera.position.x = this.player.x + Math.sin(this.cameraAngle) * distance * Math.cos(this.cameraPitch);
         this.camera.position.z = this.player.y + Math.cos(this.cameraAngle) * distance * Math.cos(this.cameraPitch);
-        this.camera.position.y = this.player.radius + Math.sin(this.cameraPitch) * distance;
-        this.camera.lookAt(this.player.x, this.player.radius, this.player.y);
+        this.camera.position.y = this.player.mesh.position.y + Math.sin(this.cameraPitch) * distance;
+        this.camera.lookAt(this.player.x, this.player.mesh.position.y, this.player.y);
 
         // Faster spawn rate: scales 1.3x every 2 levels
         const spawnMultiplier = Math.pow(1.3, Math.floor((this.player.level - 1) / 2));
@@ -375,6 +403,8 @@ export class Game {
         for (let i = this.projectiles.length - 1; i >= 0; i--) {
             const proj = this.projectiles[i];
             const isAlive = proj.update(dt);
+            const projH = this.getTerrainHeightAt(proj.x, proj.y);
+            if (proj.mesh) proj.mesh.position.y = projH + proj.radius;
 
             if (!isAlive) {
                 proj.remove();
@@ -407,6 +437,9 @@ export class Game {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const enemy = this.enemies[i];
             enemy.update(dt, this.player);
+
+            const eh = this.getTerrainHeightAt(enemy.x, enemy.y);
+            enemy.mesh.position.y = eh + enemy.radius;
 
             // Damage player
             const pDx = this.player.x - enemy.x;
@@ -471,6 +504,9 @@ export class Game {
         for (let i = this.expDrops.length - 1; i >= 0; i--) {
             const drop = this.expDrops[i];
             drop.update(dt);
+            const dropH = this.getTerrainHeightAt(drop.x, drop.y);
+            drop.mesh.position.y = dropH + 5; // offset
+
             const dx = drop.x - this.player.x;
             const dy = drop.y - this.player.y;
             const distSq = dx * dx + dy * dy;
@@ -491,6 +527,10 @@ export class Game {
         for (let i = this.coinDrops.length - 1; i >= 0; i--) {
             const drop = this.coinDrops[i];
             drop.update(dt);
+
+            const cdropH = this.getTerrainHeightAt(drop.x, drop.y);
+            drop.mesh.position.y = cdropH + 5; // offset
+
             const dx = drop.x - this.player.x;
             const dy = drop.y - this.player.y;
             const distSq = dx * dx + dy * dy;
@@ -510,6 +550,9 @@ export class Game {
         // Chests processing
         for (let i = this.chests.length - 1; i >= 0; i--) {
             const chest = this.chests[i];
+            const ch = this.getTerrainHeightAt(chest.x, chest.y);
+            chest.mesh.position.y = ch + chest.radius;
+
             const dx = chest.x - this.player.x;
             const dy = chest.y - this.player.y;
             const distSq = dx * dx + dy * dy;
