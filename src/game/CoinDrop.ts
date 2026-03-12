@@ -14,7 +14,7 @@ export class CoinDrop {
         this.scene = scene;
         this.x = x;
         this.y = y;
-        this.amount = amount;
+        this.amount = Math.max(1, Math.floor(amount));
 
         const geometry = new THREE.CylinderGeometry(this.radius, this.radius, 2, 16);
         const material = new THREE.MeshStandardMaterial({ color: 0xf1c40f, metalness: 0.8, roughness: 0.2 });

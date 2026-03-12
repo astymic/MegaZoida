@@ -132,7 +132,23 @@ export class UIManager {
             cardsContainer.appendChild(btn);
         });
 
+        const skipBtn = document.createElement('button');
+        skipBtn.innerText = 'Skip';
+        skipBtn.style.padding = '10px 20px';
+        skipBtn.style.marginTop = '20px';
+        skipBtn.style.backgroundColor = '#e74c3c';
+        skipBtn.style.color = 'white';
+        skipBtn.style.border = 'none';
+        skipBtn.style.borderRadius = '5px';
+        skipBtn.style.cursor = 'pointer';
+
+        skipBtn.onclick = () => {
+            this.closeUI();
+            onChoiceMade(null); // Return null for skip
+        };
+
         modal.appendChild(cardsContainer);
+        modal.appendChild(skipBtn);
         this.container.appendChild(modal);
     }
 }

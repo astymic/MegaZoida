@@ -17,6 +17,8 @@ export class Enemy {
 
     // 3D Rendering
     public mesh: THREE.Mesh;
+    public hpGroup: THREE.Group;
+    public hpBar: THREE.Mesh;
     private scene: THREE.Scene;
 
     constructor(scene: THREE.Scene, x: number, y: number, level: number = 1, isBoss: boolean = false) {
@@ -32,7 +34,7 @@ export class Enemy {
         this.xpYield = 5;
 
         // Scale stats based on "level" or game time
-        this.maxHp = 20 * Math.pow(1.2, level - 1);
+        this.maxHp = 20 * Math.pow(1.3, Math.floor((level - 1) / 5));
         this.damage *= Math.pow(1.1, level - 1);
 
         let matColor = 0xe74c3c;
@@ -57,6 +59,27 @@ export class Enemy {
         this.mesh.castShadow = true;
         this.mesh.receiveShadow = true;
         this.scene.add(this.mesh);
+
+        // Health Bar setup
+        this.hpGroup = new THREE.Group();
+        this.scene.add(this.hpGroup);
+
+        const bgGeo = new THREE.PlaneGeometry(this.radius * 2, 4);
+        const bgMat = new THREE.MeshBasicMaterial({ color: 0xff0000, depthTest: false }); // Render on top
+        const bgMesh = new THREE.Mesh(bgGeo, bgMat);
+        bgMesh.renderOrder = 999;
+        this.hpGroup.add(bgMesh);
+
+        const hpGeo = new THREE.PlaneGeometry(this.radius * 2, 4);
+        const hpMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, depthTest: false });
+        this.hpBar = new THREE.Mesh(hpGeo, hpMat);
+        this.hpBar.renderOrder = 1000;
+        // set origin to left so it scales left-to-right
+        hpGeo.translate(this.radius, 0, 0);
+        this.hpBar.position.x = -this.radius;
+        this.hpGroup.add(this.hpBar);
+        // Initially hidden
+        this.hpGroup.visible = false;
     }
 
     public update(dt: number, player: Player) {
@@ -75,9 +98,20 @@ export class Enemy {
         // Simple rolling animation
         this.mesh.rotation.x += this.speed * dt * 0.01;
         this.mesh.rotation.z -= this.speed * dt * 0.01;
+
+        // Update HP bar
+        if (this.hp < this.maxHp && this.hp > 0) {
+            this.hpGroup.visible = true;
+            this.hpGroup.position.set(this.x, this.radius * 2 + 10, this.y);
+            this.hpGroup.rotation.x = -Math.PI / 4; // Tilt backward for TPS view
+            this.hpBar.scale.x = Math.max(0, this.hp / this.maxHp);
+        } else {
+            this.hpGroup.visible = false;
+        }
     }
 
     public remove() {
+        this.scene.remove(this.hpGroup);
         this.scene.remove(this.mesh);
         this.mesh.geometry.dispose();
         if (Array.isArray(this.mesh.material)) {

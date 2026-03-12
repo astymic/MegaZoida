@@ -34,6 +34,7 @@ export class Player {
 
     // 3D Rendering
     public mesh: THREE.Mesh;
+    private directionIndicator: THREE.Mesh;
     private scene: THREE.Scene;
 
     constructor(scene: THREE.Scene, x: number, y: number) {
@@ -48,6 +49,14 @@ export class Player {
         this.mesh.castShadow = true;
         this.mesh.receiveShadow = true;
         this.scene.add(this.mesh);
+
+        // Add visual indicator of direction (a "nose")
+        const dirGeo = new THREE.BoxGeometry(8, 8, 20);
+        const dirMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+        this.directionIndicator = new THREE.Mesh(dirGeo, dirMat);
+        // Position it "in front" of the sphere on the Z axis
+        this.directionIndicator.position.set(0, 0, this.radius);
+        this.mesh.add(this.directionIndicator);
     }
 
     public update(dt: number, moveVector: { x: number; y: number }, timeSeconds: number, enemies: Enemy[], addProjectile: (p: any) => void, scene: THREE.Scene) {
@@ -69,8 +78,9 @@ export class Player {
             this.facingAngle = Math.atan2(moveVector.y, moveVector.x);
         }
 
-        // Sync 3D Mesh
+        // Sync 3D Mesh position and rotation (yaw)
         this.mesh.position.set(this.x, this.radius, this.y);
+        this.mesh.rotation.y = -this.facingAngle + Math.PI / 2; // Offset for atan2 Z-axis correlation
 
         // Handle Weapon Attacks
         if (this.weapons.length > 0) {

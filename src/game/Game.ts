@@ -33,6 +33,12 @@ export class Game {
     private lastChestSpawnTime: number = 0;
     private isPaused: boolean = false;
 
+    // TPS Camera Control
+    private cameraAngle: number = 0;
+    private cameraPitch: number = Math.PI / 6; // ~30 degrees
+    private isDragging: boolean = false;
+    private previousMousePosition = { x: 0, y: 0 };
+
     constructor(container: HTMLElement) {
         this.container = container;
 
@@ -79,6 +85,38 @@ export class Game {
 
         // Add overlay for HUD
         this.setupHUD();
+
+        // Setup Camera Control (Drag to rotate)
+        this.container.addEventListener('mousedown', (e) => {
+            this.isDragging = true;
+            this.previousMousePosition = { x: e.clientX, y: e.clientY };
+        });
+        this.container.addEventListener('mouseup', () => { this.isDragging = false; });
+        this.container.addEventListener('mousemove', (e) => {
+            if (this.isDragging) {
+                const deltaX = e.clientX - this.previousMousePosition.x;
+                const deltaY = e.clientY - this.previousMousePosition.y;
+                this.cameraAngle -= deltaX * 0.01;
+                this.cameraPitch = Math.max(0.1, Math.min(Math.PI / 2.2, this.cameraPitch + deltaY * 0.01));
+                this.previousMousePosition = { x: e.clientX, y: e.clientY };
+            }
+        });
+
+        // Touch support for mobile camera
+        this.container.addEventListener('touchstart', (e) => {
+            this.isDragging = true;
+            this.previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }, { passive: false });
+        this.container.addEventListener('touchend', () => { this.isDragging = false; });
+        this.container.addEventListener('touchmove', (e) => {
+            if (this.isDragging) {
+                const deltaX = e.touches[0].clientX - this.previousMousePosition.x;
+                const deltaY = e.touches[0].clientY - this.previousMousePosition.y;
+                this.cameraAngle -= deltaX * 0.01;
+                this.cameraPitch = Math.max(0.1, Math.min(Math.PI / 2.2, this.cameraPitch + deltaY * 0.01));
+                this.previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }
+        }, { passive: false });
     }
 
     private setupHUD() {
@@ -162,8 +200,10 @@ export class Game {
             return w;
         });
 
-        this.uiManager.showWeaponChest(this.player, choices, (selectedWeapon: any) => {
-            this.player.addWeapon(selectedWeapon);
+        this.uiManager.showWeaponChest(this.player, choices, (selectedWeapon: any | null) => {
+            if (selectedWeapon) {
+                this.player.addWeapon(selectedWeapon);
+            }
             this.isPaused = false;
             this.lastTime = performance.now();
             requestAnimationFrame((time) => this.loop(time));
@@ -183,18 +223,27 @@ export class Game {
     }
 
     private update(dt: number, timeSeconds: number) {
-        const move = this.inputManager.getMovementVector();
+        const inputMove = this.inputManager.getMovementVector();
+        // Translate input based on camera yaw angle
+        const move = {
+            x: inputMove.x * Math.cos(this.cameraAngle) + inputMove.y * Math.sin(this.cameraAngle),
+            y: -inputMove.x * Math.sin(this.cameraAngle) + inputMove.y * Math.cos(this.cameraAngle)
+        };
+
         this.player.update(dt, move, timeSeconds, this.enemies, (p: Projectile) => {
             this.projectiles.push(p);
         }, this.scene);
 
-        // Camera follow player
-        this.camera.position.x = this.player.x;
-        this.camera.position.z = this.player.y + 300;
-        this.camera.lookAt(this.player.x, 0, this.player.y);
+        // Camera follow player (TPS View)
+        const distance = 250;
+        this.camera.position.x = this.player.x + Math.sin(this.cameraAngle) * distance * Math.cos(this.cameraPitch);
+        this.camera.position.z = this.player.y + Math.cos(this.cameraAngle) * distance * Math.cos(this.cameraPitch);
+        this.camera.position.y = this.player.radius + Math.sin(this.cameraPitch) * distance;
+        this.camera.lookAt(this.player.x, this.player.radius, this.player.y);
 
-        // Faster spawn rate with player level
-        const spawnDelay = Math.max(0.2, 1.0 - (this.player.level * 0.05));
+        // Faster spawn rate: scales 1.3x every 2 levels
+        const spawnMultiplier = Math.pow(1.3, Math.floor((this.player.level - 1) / 2));
+        const spawnDelay = Math.max(0.01, 0.5 / spawnMultiplier);
         if (timeSeconds - this.lastSpawnTime > spawnDelay) {
             this.spawnEnemy(timeSeconds);
             this.lastSpawnTime = timeSeconds;
@@ -381,8 +430,8 @@ export class Game {
         const x = this.player.x + Math.cos(angle) * dist;
         const y = this.player.y + Math.sin(angle) * dist;
 
-        // Multiplies by 2 every 5 levels
-        const costMultiplier = Math.pow(2, Math.floor(this.player.level / 5));
+        // Multiplies by 1.5 at EACH level
+        const costMultiplier = Math.pow(1.5, Math.max(0, this.player.level - 1));
         this.chests.push(new Chest(this.scene, x, y, 10 * costMultiplier));
     }
 
