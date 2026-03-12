@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { Enemy } from './Enemy';
 import { Weapon } from './weapons/Weapon';
 
@@ -19,7 +20,7 @@ export class Player {
     public moveSpeed: number = 200; // pixels per second
     public attackSpeed: number = 1.0; // attacks per second
     public attackDamage: number = 10;
-    public attackRange: number = 150; // simple melee/ranged distance for base attack
+    public attackRange: number = 150;
     public defense: number = 0;
 
     public weapons: Weapon[] = [];
@@ -28,21 +29,53 @@ export class Player {
     // State
     private lastAttackTime: number = 0;
     public onLevelUp?: () => void;
+    public facingAngle: number = 0;
+    public iFrameTimer: number = 0;
 
-    constructor(x: number, y: number) {
+    // 3D Rendering
+    public mesh: THREE.Mesh;
+    private scene: THREE.Scene;
+
+    constructor(scene: THREE.Scene, x: number, y: number) {
+        this.scene = scene;
         this.x = x;
         this.y = y;
+
+        const geometry = new THREE.SphereGeometry(this.radius, 32, 32);
+        const material = new THREE.MeshStandardMaterial({ color: 0x4a90e2 });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(this.x, this.radius, this.y);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        this.scene.add(this.mesh);
     }
 
-    public update(dt: number, moveVector: { x: number; y: number }, timeSeconds: number, enemies: Enemy[], addProjectile: (p: any) => void) {
+    public update(dt: number, moveVector: { x: number; y: number }, timeSeconds: number, enemies: Enemy[], addProjectile: (p: any) => void, scene: THREE.Scene) {
+        const mat = this.mesh.material as THREE.MeshStandardMaterial;
+
+        if (this.iFrameTimer > 0) {
+            this.iFrameTimer -= dt;
+            mat.opacity = 0.5;
+            mat.transparent = true;
+        } else {
+            mat.opacity = 1.0;
+        }
+
         // Movement
         this.x += moveVector.x * this.moveSpeed * dt;
         this.y += moveVector.y * this.moveSpeed * dt;
 
+        if (moveVector.x !== 0 || moveVector.y !== 0) {
+            this.facingAngle = Math.atan2(moveVector.y, moveVector.x);
+        }
+
+        // Sync 3D Mesh
+        this.mesh.position.set(this.x, this.radius, this.y);
+
         // Handle Weapon Attacks
         if (this.weapons.length > 0) {
             for (const w of this.weapons) {
-                w.tryAttack(dt, timeSeconds, this, enemies, addProjectile);
+                w.tryAttack(dt, timeSeconds, this, enemies, addProjectile, scene);
             }
         } else {
             // Base attack fallback if no weapons
@@ -53,33 +86,8 @@ export class Player {
         }
     }
 
-    public draw(ctx: CanvasRenderingContext2D) {
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-        ctx.fillStyle = '#4a90e2'; // Blue hero
-        ctx.fill();
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        // Draw HP bar
-        const barWidth = 40;
-        const barHeight = 5;
-        ctx.fillStyle = '#333';
-        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius - 12, barWidth, barHeight);
-        ctx.fillStyle = '#e74c3c';
-        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius - 12, barWidth * (Math.max(0, this.hp) / this.maxHp), barHeight);
-
-        // Draw XP bar below the character
-        ctx.fillStyle = '#333';
-        ctx.fillRect(this.x - barWidth / 2, this.y + this.radius + 5, barWidth, 3);
-        ctx.fillStyle = '#00ffcc';
-        ctx.fillRect(this.x - barWidth / 2, this.y + this.radius + 5, barWidth * (this.xp / this.xpToNextLevel), 3);
-    }
-
     // Fallback if no weapons
     private baseAutoAttack(enemies: Enemy[]) {
-        // Find closest enemy
         let closestDist = Infinity;
         let target: Enemy | null = null;
 
@@ -94,18 +102,14 @@ export class Player {
         }
 
         if (target) {
-            // Deal damage
             target.hp -= this.attackDamage;
-            // In a more complex version, spawn a projectile or slash animation here
         }
     }
 
     public addWeapon(newWeapon: Weapon) {
-        // Very simple add logic for now, later we do the "Replace if full" logic
         if (this.weapons.length < this.maxWeapons) {
             this.weapons.push(newWeapon);
         } else {
-            // Replace oldest/weakest
             this.weapons[0] = newWeapon;
         }
     }
@@ -118,14 +122,11 @@ export class Player {
     }
 
     private levelUp() {
-        this.level++;
         this.xp -= this.xpToNextLevel;
-        this.xpToNextLevel = Math.floor(this.xpToNextLevel * 1.5); // Exponential growth
+        this.level++;
+        this.xpToNextLevel = Math.floor(this.xpToNextLevel * 1.5);
+        this.hp = this.maxHp;
 
-        // Heal some HP on level up
-        this.hp = Math.min(this.maxHp, this.hp + 20);
-
-        // Trigger UI Buff Selection
         if (this.onLevelUp) {
             this.onLevelUp();
         }

@@ -16,7 +16,7 @@ export class Bow extends Weapon {
         });
     }
 
-    protected attack(_timeSeconds: number, player: Player, enemies: Enemy[], addProjectile: (p: Projectile) => void): boolean {
+    protected attack(_timeSeconds: number, player: Player, enemies: Enemy[], addProjectile: (p: Projectile) => void, scene: any): boolean {
         let closestDist = Infinity;
         let target: Enemy | null = null;
 
@@ -44,7 +44,7 @@ export class Bow extends Weapon {
             const damage = player.attackDamage * this.data.damageMult;
 
             // Spawn projectile
-            const proj = new Projectile(player.x, player.y, vx, vy, damage, '#bdc3c7');
+            const proj = new Projectile(scene, player.x, player.y, vx, vy, damage, 0xbdc3c7);
             addProjectile(proj);
 
             return true;

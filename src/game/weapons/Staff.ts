@@ -16,7 +16,7 @@ export class Staff extends Weapon {
         });
     }
 
-    protected attack(_timeSeconds: number, player: Player, enemies: Enemy[], addProjectile: (p: Projectile) => void): boolean {
+    protected attack(_timeSeconds: number, player: Player, enemies: Enemy[], addProjectile: (p: Projectile) => void, scene: any): boolean {
         // Fire in a random direction or at multiple enemies
         // Let's fire a slow, piercing magic orb towards the closest enemy
         let closestDist = Infinity;
@@ -36,17 +36,18 @@ export class Staff extends Weapon {
         if (target) {
             const dx = target.x - player.x;
             const dy = target.y - player.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+            const targetAngle = Math.atan2(dy, dx);
 
-            const speed = 150; // Slow orb
-            const vx = (dx / dist) * speed;
-            const vy = (dy / dist) * speed;
+            const speed = 800; // was 150
+            const vx = (Math.cos(targetAngle) * speed);
+            const vy = (Math.sin(targetAngle) * speed);
 
             const damage = player.attackDamage * this.data.damageMult;
 
-            const proj = new Projectile(player.x, player.y, vx, vy, damage, '#9b59b6');
+            const proj = new Projectile(scene, player.x, player.y, vx, vy, damage, 0x9b59b6);
             proj.radius = 8;
-            proj.pierce = 2; // Can hit 3 enemies total (pierce 2 means it survives 2 hits)
+            proj.pierce = 0;
+            proj.maxLifeTime = 1.0;
 
             addProjectile(proj);
             return true;

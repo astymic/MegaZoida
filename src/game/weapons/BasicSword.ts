@@ -15,28 +15,28 @@ export class BasicSword extends Weapon {
         });
     }
 
-    protected attack(_timeSeconds: number, player: Player, enemies: Enemy[], _addProjectile: (p: any) => void): boolean {
-        let closestDist = Infinity;
-        let target: Enemy | null = null;
+    protected attack(_timeSeconds: number, player: Player, enemies: Enemy[], _addProjectile: (p: any) => void, _scene: any): boolean {
+        let hitCount = 0;
+        const damage = player.attackDamage * this.data.damageMult;
 
-        const actualRange = this.data.range;
-
+        // Splash damage in front of the player (90 degree cone, max 100 range)
         for (const enemy of enemies) {
             const dx = enemy.x - player.x;
             const dy = enemy.y - player.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < closestDist && dist <= actualRange) {
-                closestDist = dist;
-                target = enemy;
+
+            if (dist <= 100) {
+                const enemyAngle = Math.atan2(dy, dx);
+                let angleDiff = Math.abs(enemyAngle - player.facingAngle);
+                if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+
+                if (angleDiff <= Math.PI / 4) { // 45 degrees each side
+                    enemy.hp -= damage;
+                    hitCount++;
+                }
             }
         }
 
-        if (target) {
-            // Deal damage
-            target.hp -= player.attackDamage * this.data.damageMult;
-            return true; // We successfully attacked
-        }
-
-        return false; // Did not attack
+        return hitCount > 0;
     }
 }

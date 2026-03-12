@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+
 export class Projectile {
     public x: number;
     public y: number;
@@ -6,30 +8,40 @@ export class Projectile {
     public damage: number;
     public radius: number = 4;
     public pierce: number = 0; // Number of enemies it can pierce
-    public color: string = '#fff';
     private timeAlive: number = 0;
     public maxLifeTime: number = 2.0;
 
-    constructor(x: number, y: number, vx: number, vy: number, damage: number, color: string = '#fff') {
+    public mesh: THREE.Mesh;
+    private scene: THREE.Scene;
+
+    constructor(scene: THREE.Scene, x: number, y: number, vx: number, vy: number, damage: number, colorHex: number = 0xffffff) {
+        this.scene = scene;
         this.x = x;
         this.y = y;
         this.vx = vx;
         this.vy = vy;
         this.damage = damage;
-        this.color = color;
+
+        const geometry = new THREE.SphereGeometry(this.radius, 8, 8);
+        const material = new THREE.MeshBasicMaterial({ color: colorHex });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(this.x, 10, this.y); // Raised slightly
+        this.scene.add(this.mesh);
     }
 
     public update(dt: number): boolean {
         this.x += this.vx * dt;
         this.y += this.vy * dt;
         this.timeAlive += dt;
-        return this.timeAlive < this.maxLifeTime; // Return false to indicate death
+
+        this.mesh.position.set(this.x, 10, this.y);
+
+        return this.timeAlive < this.maxLifeTime;
     }
 
-    public draw(ctx: CanvasRenderingContext2D) {
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-        ctx.fillStyle = this.color;
-        ctx.fill();
+    public remove() {
+        this.scene.remove(this.mesh);
+        this.mesh.geometry.dispose();
+        (this.mesh.material as THREE.Material).dispose();
     }
 }

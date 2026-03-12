@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { InputManager } from './InputManager';
 import { Player } from './Player';
 import { Enemy } from './Enemy';
@@ -11,47 +12,104 @@ import { Projectile } from './Projectile';
 import { UIManager } from './UIManager';
 
 export class Game {
-    private canvas: HTMLCanvasElement;
-    private ctx: CanvasRenderingContext2D;
+    private container: HTMLElement;
+    private scene: THREE.Scene;
+    private camera: THREE.PerspectiveCamera;
+    private renderer: THREE.WebGLRenderer;
+
     private isRunning: boolean = false;
     private lastTime: number = 0;
     private inputManager: InputManager;
     private uiManager: UIManager;
+
     private player: Player;
     private enemies: Enemy[] = [];
     private expDrops: ExpDrop[] = [];
     private coinDrops: CoinDrop[] = [];
     private chests: Chest[] = [];
     private projectiles: Projectile[] = [];
+
     private lastSpawnTime: number = 0;
     private lastChestSpawnTime: number = 0;
     private isPaused: boolean = false;
 
-    constructor(canvas: HTMLCanvasElement) {
-        this.canvas = canvas;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-            throw new Error('Failed to get 2D rendering context');
-        }
-        this.ctx = ctx;
+    constructor(container: HTMLElement) {
+        this.container = container;
+
+        // Setup Three.js
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x1a1a1a);
+
+        this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 10000);
+        this.camera.position.set(0, 400, 300); // Top-down angled
+        this.camera.lookAt(0, 0, 0);
+
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.shadowMap.enabled = true;
+        this.container.appendChild(this.renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        this.scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(100, 300, 100);
+        dirLight.castShadow = true;
+        this.scene.add(dirLight);
+
+        // Ground plane
+        const planeGeo = new THREE.PlaneGeometry(10000, 10000);
+        const planeMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        const plane = new THREE.Mesh(planeGeo, planeMat);
+        plane.rotation.x = -Math.PI / 2;
+        plane.receiveShadow = true;
+        this.scene.add(plane);
+
         this.inputManager = new InputManager();
         this.uiManager = new UIManager();
 
         // Initialize Player in the center
-        this.player = new Player(this.canvas.width / 2, this.canvas.height / 2);
-
-        // Give player a basic sword initially
+        this.player = new Player(this.scene, 0, 0);
         this.player.addWeapon(new BasicSword());
 
-        // Handle Level up
-        this.player.onLevelUp = () => {
-            this.handleLevelUp();
-        };
+        this.player.onLevelUp = () => this.handleLevelUp();
 
-        // Re-center on resize
-        window.addEventListener('resize', () => {
-            // Adjust canvas size // logic in main.ts
-        });
+        window.addEventListener('resize', () => this.onWindowResize());
+
+        // Add overlay for HUD
+        this.setupHUD();
+    }
+
+    private setupHUD() {
+        const hud = document.createElement('div');
+        hud.id = 'hud';
+        hud.style.position = 'absolute';
+        hud.style.top = '10px';
+        hud.style.left = '10px';
+        hud.style.color = 'white';
+        hud.style.fontFamily = 'sans-serif';
+        hud.style.fontSize = '20px';
+        hud.style.pointerEvents = 'none';
+        this.container.appendChild(hud);
+    }
+
+    private updateHUD() {
+        const hud = document.getElementById('hud');
+        if (hud) {
+            hud.innerHTML = `
+                <div>Level: ${this.player.level}</div>
+                <div>Coins: ${this.player.coins} 🪙</div>
+                <div>Weapons: ${this.player.weapons.map(w => w.data.icon).join(' ')}</div>
+                <div style="margin-top:10px; color:#e74c3c">HP: ${Math.floor(Math.max(0, this.player.hp))} / ${this.player.maxHp}</div>
+            `;
+        }
+    }
+
+    private onWindowResize() {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
     public start() {
@@ -70,32 +128,42 @@ export class Game {
         this.uiManager.showLevelUp(this.player, () => {
             this.isPaused = false;
 
-            // Spawn boss if level is multiple of 5
-            if (this.player.level > 1 && this.player.level % 5 === 0) {
+            // Spawn boss if level is multiple of 10
+            if (this.player.level > 1 && this.player.level % 10 === 0) {
                 this.spawnBoss(this.lastTime / 1000);
             }
 
-            this.lastTime = performance.now(); // Reset time to prevent huge delta
+            this.lastTime = performance.now();
             requestAnimationFrame((time) => this.loop(time));
         });
     }
 
-    private spawnBoss(timeSeconds: number) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = Math.max(this.canvas.width, this.canvas.height) / 2 + 100;
-        const x = this.player.x + Math.cos(angle) * dist;
-        const y = this.player.y + Math.sin(angle) * dist;
-
-        const level = 1 + Math.floor(timeSeconds / 60);
-        this.enemies.push(new Enemy(x, y, level, true)); // isBoss = true
-    }
-
     private openChest() {
         this.isPaused = true;
-        this.uiManager.showWeaponChest(this.player, () => {
-            // Randomly give Bow or Staff on chest open for now
-            const w = Math.random() > 0.5 ? new Bow() : new Staff();
-            this.player.addWeapon(w);
+
+        // Random generator pool
+        const weaponTypes = [() => new BasicSword(), () => new Bow(), () => new Staff()];
+        const possibleBuffs = ['damageMult', 'speedMult', 'rangeMult'] as const;
+
+        // Based on user request, add more buffs at level scaling: max 5 at level 100
+        const buffCount = Math.min(5, 1 + Math.floor(this.player.level / 20));
+
+        const choices = Array.from({ length: 3 }).map(() => {
+            const w = weaponTypes[Math.floor(Math.random() * weaponTypes.length)]();
+            w.data.name += ` (+${buffCount})`;
+
+            // Randomly pick buffs and apply them
+            for (let i = 0; i < buffCount; i++) {
+                const buffType = possibleBuffs[Math.floor(Math.random() * possibleBuffs.length)];
+                if (buffType === 'damageMult') w.data.damageMult += 0.5;
+                if (buffType === 'speedMult') w.data.speedMult *= 1.3;
+                if (buffType === 'rangeMult') w.data.damageMult += 0.2; // Generic generic buff
+            }
+            return w;
+        });
+
+        this.uiManager.showWeaponChest(this.player, choices, (selectedWeapon: any) => {
+            this.player.addWeapon(selectedWeapon);
             this.isPaused = false;
             this.lastTime = performance.now();
             requestAnimationFrame((time) => this.loop(time));
@@ -105,29 +173,34 @@ export class Game {
     private loop(time: number) {
         if (!this.isRunning || this.isPaused) return;
 
-        const deltaTime = (time - this.lastTime) / 1000; // in seconds
+        const deltaTime = (time - this.lastTime) / 1000;
         this.lastTime = time;
 
         this.update(deltaTime, time / 1000);
-        this.draw();
+        this.render();
 
         requestAnimationFrame((time) => this.loop(time));
     }
 
     private update(dt: number, timeSeconds: number) {
-        // Player Input
         const move = this.inputManager.getMovementVector();
         this.player.update(dt, move, timeSeconds, this.enemies, (p: Projectile) => {
             this.projectiles.push(p);
-        });
+        }, this.scene);
 
-        // Spawn Enemies
-        if (timeSeconds - this.lastSpawnTime > 1.0) { // arbitrary 1s spawn
+        // Camera follow player
+        this.camera.position.x = this.player.x;
+        this.camera.position.z = this.player.y + 300;
+        this.camera.lookAt(this.player.x, 0, this.player.y);
+
+        // Faster spawn rate with player level
+        const spawnDelay = Math.max(0.2, 1.0 - (this.player.level * 0.05));
+        if (timeSeconds - this.lastSpawnTime > spawnDelay) {
             this.spawnEnemy(timeSeconds);
             this.lastSpawnTime = timeSeconds;
         }
 
-        // Spawn Chests (every 30 seconds)
+        // Chest spawning
         if (timeSeconds - this.lastChestSpawnTime > 30.0) {
             this.spawnChest();
             this.lastChestSpawnTime = timeSeconds;
@@ -139,11 +212,11 @@ export class Game {
             const isAlive = proj.update(dt);
 
             if (!isAlive) {
+                proj.remove();
                 this.projectiles.splice(i, 1);
                 continue;
             }
 
-            // Projectile-Enemy Collisions
             for (const enemy of this.enemies) {
                 const dx = enemy.x - proj.x;
                 const dy = enemy.y - proj.y;
@@ -154,11 +227,10 @@ export class Game {
                     enemy.hp -= proj.damage;
                     if (proj.pierce > 0) {
                         proj.pierce--;
-                        // To avoid multi-hit on same enemy in consecutive frames we could track hit enemies, but we skip for MVP
-                        // For MVP, just teleport it slightly forward to avoid next-frame immediate hit
                         proj.x += proj.vx * 0.1;
                         proj.y += proj.vy * 0.1;
                     } else {
+                        proj.remove();
                         this.projectiles.splice(i, 1);
                         break;
                     }
@@ -166,19 +238,32 @@ export class Game {
             }
         }
 
-        // Update and check death of Enemies
+        // Enemies Update
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const enemy = this.enemies[i];
             enemy.update(dt, this.player);
 
-            if (enemy.hp <= 0) {
-                // Spawn XP
-                this.expDrops.push(new ExpDrop(enemy.x, enemy.y, enemy.xpYield));
-                // 30% chance for coin drop
-                if (Math.random() < 0.3) {
-                    this.coinDrops.push(new CoinDrop(enemy.x + 10, enemy.y + 10, 1));
+            // Damage player
+            const pDx = this.player.x - enemy.x;
+            const pDy = this.player.y - enemy.y;
+            const pDistSq = pDx * pDx + pDy * pDy;
+            const pCollDist = this.player.radius + enemy.radius;
+
+            if (pDistSq <= pCollDist * pCollDist) {
+                if (this.player.iFrameTimer <= 0) {
+                    this.player.hp -= enemy.damage; // Full bump damage
+                    this.player.iFrameTimer = 0.5; // Half second iframe
                 }
-                // Remove enemy
+            }
+
+            if (enemy.hp <= 0) {
+                this.expDrops.push(new ExpDrop(this.scene, enemy.x, enemy.y, enemy.xpYield));
+
+                // 100% coin drop. Multiplier based on bosses killed (levels / 10)
+                const coinMultiplier = 1 + Math.floor(this.player.level / 10);
+                this.coinDrops.push(new CoinDrop(this.scene, enemy.x + 10, enemy.y + 10, 1 * coinMultiplier));
+
+                enemy.remove();
                 this.enemies.splice(i, 1);
             }
         }
@@ -207,53 +292,50 @@ export class Game {
             }
         }
 
-        // Drop logic vars
-        const magnetRadius = 100;
-        const pickupRadius = this.player.radius + 10;
+        const magnetRadius = 150;
+        const pickupRadius = this.player.radius + 15;
 
-        // Player collision with ExpDrops
+        // ExpDrops processing
         for (let i = this.expDrops.length - 1; i >= 0; i--) {
             const drop = this.expDrops[i];
             drop.update(dt);
-
             const dx = drop.x - this.player.x;
             const dy = drop.y - this.player.y;
             const distSq = dx * dx + dy * dy;
 
             if (distSq <= pickupRadius * pickupRadius) {
                 this.player.addXp(drop.amount);
+                drop.remove();
                 this.expDrops.splice(i, 1);
             } else if (distSq <= magnetRadius * magnetRadius) {
-                // Magnetize towards player
                 const dist = Math.sqrt(distSq);
-                const speed = 300 * dt; // fast magnet
+                const speed = 400 * dt;
                 drop.x -= (dx / dist) * speed;
                 drop.y -= (dy / dist) * speed;
             }
         }
 
-        // Player collision with CoinDrops
+        // CoinDrops processing
         for (let i = this.coinDrops.length - 1; i >= 0; i--) {
             const drop = this.coinDrops[i];
             drop.update(dt);
-
             const dx = drop.x - this.player.x;
             const dy = drop.y - this.player.y;
             const distSq = dx * dx + dy * dy;
 
             if (distSq <= pickupRadius * pickupRadius) {
                 this.player.coins += drop.amount;
+                drop.remove();
                 this.coinDrops.splice(i, 1);
             } else if (distSq <= magnetRadius * magnetRadius) {
-                // Magnetize
                 const dist = Math.sqrt(distSq);
-                const speed = 300 * dt;
+                const speed = 400 * dt;
                 drop.x -= (dx / dist) * speed;
                 drop.y -= (dy / dist) * speed;
             }
         }
 
-        // Player collision with Chests
+        // Chests processing
         for (let i = this.chests.length - 1; i >= 0; i--) {
             const chest = this.chests[i];
             const dx = chest.x - this.player.x;
@@ -263,102 +345,48 @@ export class Game {
             if (distSq <= Math.pow(this.player.radius + chest.radius, 2)) {
                 if (this.player.coins >= chest.cost) {
                     this.player.coins -= chest.cost;
+                    chest.remove();
                     this.chests.splice(i, 1);
                     this.openChest();
                 }
             }
         }
+
+        this.updateHUD();
     }
 
     private spawnEnemy(timeSeconds: number) {
-        // Spawn randomly outside of viewport
         const angle = Math.random() * Math.PI * 2;
-        const dist = Math.max(this.canvas.width, this.canvas.height) / 2 + 100;
+        const dist = 600; // spawn outside view
         const x = this.player.x + Math.cos(angle) * dist;
         const y = this.player.y + Math.sin(angle) * dist;
 
-        // Level increases over time
-        const level = 1 + Math.floor(timeSeconds / 60); // 1 level per minute
-        this.enemies.push(new Enemy(x, y, level));
+        const level = 1 + Math.floor(timeSeconds / 60);
+        this.enemies.push(new Enemy(this.scene, x, y, level));
+    }
+
+    private spawnBoss(timeSeconds: number) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 600;
+        const x = this.player.x + Math.cos(angle) * dist;
+        const y = this.player.y + Math.sin(angle) * dist;
+
+        const level = 1 + Math.floor(timeSeconds / 60);
+        this.enemies.push(new Enemy(this.scene, x, y, level, true)); // isBoss = true
     }
 
     private spawnChest() {
         const angle = Math.random() * Math.PI * 2;
-        const dist = 300 + Math.random() * 200; // spawn slightly further from player
+        const dist = 300 + Math.random() * 200;
         const x = this.player.x + Math.cos(angle) * dist;
         const y = this.player.y + Math.sin(angle) * dist;
 
-        this.chests.push(new Chest(x, y, 10)); // Base cost 10
+        // Multiplies by 2 every 5 levels
+        const costMultiplier = Math.pow(2, Math.floor(this.player.level / 5));
+        this.chests.push(new Chest(this.scene, x, y, 10 * costMultiplier));
     }
 
-    private draw() {
-        // Clear screen
-        this.ctx.fillStyle = '#1a1a1a';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-        // Camera transform: shift context so player is always in center
-        this.ctx.save();
-
-        // Center of screen
-        const cx = this.canvas.width / 2;
-        const cy = this.canvas.height / 2;
-
-        // Translate context opposite to player position + center
-        this.ctx.translate(cx - this.player.x, cy - this.player.y);
-
-        // Draw some test grid or background elements
-        this.ctx.strokeStyle = '#333';
-        this.ctx.lineWidth = 1;
-        const gridSize = 100;
-
-        // Infinite grid visualizer
-        const startX = Math.floor((this.player.x - cx) / gridSize) * gridSize;
-        const endX = startX + this.canvas.width + gridSize * 2;
-        const startY = Math.floor((this.player.y - cy) / gridSize) * gridSize;
-        const endY = startY + this.canvas.height + gridSize * 2;
-
-        for (let x = startX; x < endX; x += gridSize) {
-            this.ctx.beginPath();
-            this.ctx.moveTo(x, startY);
-            this.ctx.lineTo(x, endY);
-            this.ctx.stroke();
-        }
-        for (let y = startY; y < endY; y += gridSize) {
-            this.ctx.beginPath();
-            this.ctx.moveTo(startX, y);
-            this.ctx.lineTo(endX, y);
-            this.ctx.stroke();
-        }
-
-        // Draw drops
-        for (const drop of this.expDrops) drop.draw(this.ctx);
-        for (const coin of this.coinDrops) coin.draw(this.ctx);
-
-        // Draw chests
-        for (const chest of this.chests) chest.draw(this.ctx);
-
-        // Draw projectiles
-        for (const proj of this.projectiles) {
-            proj.draw(this.ctx);
-        }
-
-        // Draw enemies
-        for (const enemy of this.enemies) enemy.draw(this.ctx);
-
-        // Draw player
-        this.player.draw(this.ctx);
-
-        this.ctx.restore();
-
-        // Draw HUD
-        this.ctx.fillStyle = '#fff';
-        this.ctx.font = '24px sans-serif';
-        this.ctx.textAlign = 'left';
-        this.ctx.fillText(`Level: ${this.player.level}`, 20, 40);
-        this.ctx.fillText(`Coins: ${this.player.coins} 🪙`, 20, 70);
-
-        // Weapon info
-        this.ctx.font = '16px sans-serif';
-        this.ctx.fillText(`Weapons: ${this.player.weapons.map(w => w.data.icon).join(' ')}`, 20, 100);
+    private render() {
+        this.renderer.render(this.scene, this.camera);
     }
 }

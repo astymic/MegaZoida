@@ -20,10 +20,10 @@ export abstract class Weapon {
     }
 
     // Returns true if the weapon actually fired/attacked
-    public tryAttack(_dt: number, timeSeconds: number, player: Player, enemies: Enemy[], addProjectile: (p: any) => void): boolean {
+    public tryAttack(_dt: number, timeSeconds: number, player: Player, enemies: Enemy[], addProjectile: (p: any) => void, scene: any): boolean {
         const cooldown = 1 / (player.attackSpeed * this.data.speedMult);
         if (timeSeconds - this.lastAttackTime >= cooldown) {
-            const attacked = this.attack(timeSeconds, player, enemies, addProjectile);
+            const attacked = this.attack(timeSeconds, player, enemies, addProjectile, scene);
             if (attacked) {
                 this.lastAttackTime = timeSeconds;
                 return true;
@@ -34,5 +34,5 @@ export abstract class Weapon {
 
     // To be implemented by subclasses
     // Should handle dealing damage to enemies, or creating projectiles
-    protected abstract attack(timeSeconds: number, player: Player, enemies: Enemy[], addProjectile: (p: any) => void): boolean;
+    protected abstract attack(timeSeconds: number, player: Player, enemies: Enemy[], addProjectile: (p: any) => void, scene: any): boolean;
 }

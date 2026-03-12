@@ -5,81 +5,74 @@ export class UIManager {
 
     constructor() {
         this.container = document.createElement('div');
-        this.container.className = 'ui-layer';
+        this.container.id = 'ui-container';
         this.container.style.position = 'absolute';
         this.container.style.top = '0';
         this.container.style.left = '0';
-        this.container.style.width = '100%';
-        this.container.style.height = '100%';
-        this.container.style.pointerEvents = 'none'; // let clicks pass through mainly
+        this.container.style.width = '100vw';
+        this.container.style.height = '100vh';
+        this.container.style.pointerEvents = 'none'; // Only block when UI active
         this.container.style.display = 'flex';
         this.container.style.justifyContent = 'center';
         this.container.style.alignItems = 'center';
-        this.container.style.fontFamily = 'sans-serif';
-
-        const app = document.getElementById('app');
-        if (app) app.appendChild(this.container);
+        this.container.style.zIndex = '1000';
+        document.body.appendChild(this.container);
     }
 
     public showLevelUp(player: Player, onChoiceMade: () => void) {
-        this.container.innerHTML = '';
+        this.container.innerHTML = ''; // clear
         this.container.style.pointerEvents = 'auto'; // intercept clicks
         this.container.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'; // Dim background
 
         const menu = document.createElement('div');
-        menu.style.background = '#222';
+        menu.style.background = '#2c3e50';
         menu.style.padding = '20px';
         menu.style.borderRadius = '10px';
-        menu.style.border = '2px solid #555';
+        menu.style.border = '2px solid #f1c40f';
         menu.style.textAlign = 'center';
 
         const title = document.createElement('h2');
-        title.innerText = 'Level Up!';
+        title.innerText = `Level ${player.level} reached! Choose a Buff:`;
         title.style.color = '#fff';
         title.style.marginBottom = '20px';
         menu.appendChild(title);
 
-        const buffs = [
-            { name: '+10% Movement Speed', apply: () => player.moveSpeed *= 1.1 },
-            { name: '+25 Max HP', apply: () => { player.maxHp += 25; player.hp += 25; } },
-            { name: '+5 Attack Damage', apply: () => player.attackDamage += 5 },
-            { name: '+10% Attack Speed', apply: () => player.attackSpeed *= 1.1 },
-            { name: 'Full Heal', apply: () => player.hp = player.maxHp },
+        // Provide 3 random buffs
+        const possibleBuffs = [
+            { name: '+ Max HP', apply: () => player.maxHp += 20 },
+            { name: '+ Movement Speed', apply: () => player.moveSpeed += 20 },
+            { name: '+ Attack Speed', apply: () => player.attackSpeed += 0.2 },
+            { name: '+ Attack Damage', apply: () => player.attackDamage += 5 },
+            { name: '+ Regen HP (Insta Heal)', apply: () => player.hp += 50 }
         ];
 
-        // Pick 3 random
-        const shuffled = buffs.sort(() => 0.5 - Math.random());
+        // Shuffle and pick 3
+        const shuffled = possibleBuffs.sort(() => 0.5 - Math.random());
         const choices = shuffled.slice(0, 3);
-
-        const choicesContainer = document.createElement('div');
-        choicesContainer.style.display = 'flex';
-        choicesContainer.style.gap = '10px';
-        choicesContainer.style.flexDirection = 'column';
 
         choices.forEach(choice => {
             const btn = document.createElement('button');
             btn.innerText = choice.name;
-            btn.style.padding = '15px 20px';
+            btn.style.display = 'block';
+            btn.style.width = '100%';
+            btn.style.padding = '10px';
+            btn.style.marginBottom = '10px';
             btn.style.fontSize = '16px';
             btn.style.cursor = 'pointer';
             btn.style.backgroundColor = '#3498db';
             btn.style.color = '#fff';
             btn.style.border = 'none';
             btn.style.borderRadius = '5px';
-            btn.style.transition = 'background 0.2s';
-
-            btn.onmouseover = () => btn.style.backgroundColor = '#2980b9';
-            btn.onmouseout = () => btn.style.backgroundColor = '#3498db';
 
             btn.onclick = () => {
                 choice.apply();
                 this.closeUI();
                 onChoiceMade();
             };
-            choicesContainer.appendChild(btn);
+
+            menu.appendChild(btn);
         });
 
-        menu.appendChild(choicesContainer);
         this.container.appendChild(menu);
     }
 
@@ -89,49 +82,57 @@ export class UIManager {
         this.container.style.backgroundColor = 'transparent';
     }
 
-    public showWeaponChest(_player: Player, onChoiceMade: () => void) {
+    public showWeaponChest(_player: Player, weapons: any[], onChoiceMade: (w: any) => void) {
         this.container.innerHTML = '';
-        this.container.style.pointerEvents = 'auto'; // intercept clicks
-        this.container.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'; // Dim background
+        this.container.style.pointerEvents = 'auto';
+        this.container.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
 
-        const menu = document.createElement('div');
-        menu.style.background = '#8e44ad';
-        menu.style.padding = '20px';
-        menu.style.borderRadius = '10px';
-        menu.style.border = '2px solid #f1c40f';
-        menu.style.textAlign = 'center';
+        const modal = document.createElement('div');
+        modal.style.background = '#34495e';
+        modal.style.padding = '30px';
+        modal.style.borderRadius = '10px';
+        modal.style.textAlign = 'center';
+        modal.style.color = '#fff';
 
         const title = document.createElement('h2');
-        title.innerText = 'Chest Opened!';
-        title.style.color = '#fff';
-        title.style.marginBottom = '20px';
-        menu.appendChild(title);
+        title.innerText = 'Choose your new weapon!';
+        modal.appendChild(title);
 
-        // Placeholder: Need to import weapons if we actually instantiate them here.
-        // For now, let's just use Game's logic or a simple callback. But since UIManager is simple, we will just dispatch the selection.
-        // We will just offer 1 basic choice for now to test the logic.
-        // Real implementation would receive a list of Weapon objects to choose from.
-        const btn = document.createElement('button');
-        btn.innerText = 'Take Basic Sword (Test)';
-        btn.style.padding = '15px 20px';
-        btn.style.fontSize = '16px';
-        btn.style.cursor = 'pointer';
-        btn.style.backgroundColor = '#f1c40f';
-        btn.style.color = '#000';
-        btn.style.border = 'none';
-        btn.style.borderRadius = '5px';
-        btn.style.transition = 'background 0.2s';
+        const cardsContainer = document.createElement('div');
+        cardsContainer.style.display = 'flex';
+        cardsContainer.style.gap = '20px';
+        cardsContainer.style.marginTop = '20px';
 
-        btn.onmouseover = () => btn.style.backgroundColor = '#e67e22';
-        btn.onmouseout = () => btn.style.backgroundColor = '#f1c40f';
+        weapons.forEach((weapon) => {
+            const btn = document.createElement('button');
+            btn.style.padding = '15px';
+            btn.style.backgroundColor = '#8e44ad'; // Chest purple
+            btn.style.color = 'white';
+            btn.style.border = 'none';
+            btn.style.borderRadius = '5px';
+            btn.style.cursor = 'pointer';
+            btn.style.display = 'flex';
+            btn.style.flexDirection = 'column';
+            btn.style.alignItems = 'center';
 
-        btn.onclick = () => {
-            // Game logic will add the actual weapon, so we just signal choice made
-            this.closeUI();
-            onChoiceMade();
-        };
-        menu.appendChild(btn);
+            const icon = document.createElement('div');
+            icon.innerText = weapon.data.icon;
+            icon.style.fontSize = '32px';
 
-        this.container.appendChild(menu);
+            const text = document.createElement('div');
+            text.innerText = `${weapon.data.name}\nDamage x${weapon.data.damageMult.toFixed(1)}\nSpeed x${weapon.data.speedMult.toFixed(1)}`;
+
+            btn.appendChild(icon);
+            btn.appendChild(text);
+
+            btn.onclick = () => {
+                this.closeUI();
+                onChoiceMade(weapon);
+            };
+            cardsContainer.appendChild(btn);
+        });
+
+        modal.appendChild(cardsContainer);
+        this.container.appendChild(modal);
     }
 }
