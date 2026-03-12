@@ -185,29 +185,37 @@ export class Game {
                 }
             }
 
-            // --- Decorations: scatter trees, rocks, grass around the map ---
+            // --- Decorations: optimized for mobile/Android performance ---
             const decorFiles = [
-                { path: '/assets/models/Mountain/Tree01.fbx', count: 60, scale: 2.5 },
-                { path: '/assets/models/Mountain/Rock01.fbx', count: 40, scale: 2.0 },
-                { path: '/assets/models/Mountain/Rock02.fbx', count: 30, scale: 1.8 },
-                { path: '/assets/models/Mountain/Bush01.fbx', count: 50, scale: 2.0 },
-                { path: '/assets/models/Mountain/Grass01.fbx', count: 80, scale: 1.5 },
-                { path: '/assets/models/Mountain/Flower01.fbx', count: 40, scale: 1.5 },
+                { path: '/assets/models/Mountain/Tree01.fbx', count: 15, scale: 2.5 },
+                { path: '/assets/models/Mountain/Rock01.fbx', count: 10, scale: 2.0 },
+                { path: '/assets/models/Mountain/Rock02.fbx', count: 8, scale: 1.8 },
+                { path: '/assets/models/Mountain/Bush01.fbx', count: 12, scale: 2.0 },
+                { path: '/assets/models/Mountain/Grass01.fbx', count: 15, scale: 1.5 },
+                { path: '/assets/models/Mountain/Flower01.fbx', count: 8, scale: 1.5 },
             ];
 
             for (const def of decorFiles) {
                 try {
                     const fbx = await load(def.path);
+                    // Lower material quality for decorations
+                    fbx.traverse((child) => {
+                        if ((child as THREE.Mesh).isMesh) {
+                            const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+                            if (mat) { mat.roughness = 1.0; mat.metalness = 0; }
+                        }
+                    });
                     for (let i = 0; i < def.count; i++) {
                         const c = fbx.clone();
                         c.scale.set(def.scale, def.scale, def.scale);
-                        // Scatter in a ring away from player spawn (center)
+                        // Scatter in a ring away from player spawn
                         const angle = Math.random() * Math.PI * 2;
                         const dist = 400 + Math.random() * 3500;
                         c.position.set(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
                         c.rotation.y = Math.random() * Math.PI * 2;
-                        c.receiveShadow = true;
-                        c.castShadow = true;
+                        // Don't cast shadows on decorations – expensive on mobile
+                        c.castShadow = false;
+                        c.receiveShadow = false;
                         this.scene.add(c);
                     }
                 } catch (e) {

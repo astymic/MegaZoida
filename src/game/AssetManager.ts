@@ -4,60 +4,77 @@ import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 export class AssetManager {
     public static archerFbx: THREE.Group | null = null;
+    public static skeletonFbx: THREE.Group | null = null;
 
     public static async preloadAll(onProgress?: (p: number) => void): Promise<void> {
-        return new Promise((resolve) => {
-            const loader = new FBXLoader();
+        const loader = new FBXLoader();
 
-            // The textures should be resolved automatically in the tex folder if they exist.
-            loader.load('/assets/models/Chiori/Chiori.fbx', (fbx) => {
-                // Determine scale based on new model (usually 0.2 is a good Mixamo default, but we'll try 0.26 as requested in phase 9)
-                fbx.scale.set(0.26, 0.26, 0.26);
-
-                // Fix Y-up vs Z-up FBX axis mismatch (common with Maya/DAZ exports)
-                // Negative PI/2 on X rotates Z-up model to Y-up (Three.js coordinate system)
-                fbx.rotation.x = -Math.PI / 2;
-                fbx.rotation.y = 0;
-
-                fbx.traverse((child) => {
-                    if ((child as THREE.Mesh).isMesh) {
-                        child.castShadow = true;
-                        child.receiveShadow = true;
-
-                        // Disable specular highlights which sometimes break cartoon FBX models
-                        if ((child as THREE.Mesh).material) {
-                            const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
-                            mat.roughness = 0.8;
-                        }
-                    }
+        const loadFbx = (path: string, onProg?: (p: number) => void): Promise<THREE.Group> =>
+            new Promise((resolve) => {
+                loader.load(path, resolve, (xhr) => {
+                    if (onProg) onProg(xhr.loaded / xhr.total);
+                }, (err) => {
+                    console.error('FBX load error', path, err);
+                    resolve(new THREE.Group()); // empty fallback
                 });
-
-                AssetManager.archerFbx = fbx;
-                resolve();
-            }, (xhr) => {
-                if (onProgress) {
-                    onProgress(xhr.loaded / xhr.total);
-                }
-            }, (error) => {
-                console.error("Asset loading error:", error);
-                resolve(); // Still resolve so game continues
             });
+
+        // --- Load Archer (Chiori) ---
+        const chiori = await loadFbx('/assets/models/Chiori/Chiori.fbx', onProgress);
+        chiori.scale.set(0.26, 0.26, 0.26);
+        // Fix Y-up vs Z-up FBX axis mismatch (common with Maya/DAZ exports)
+        chiori.rotation.x = -Math.PI / 2;
+        chiori.rotation.y = 0;
+        chiori.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+                const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+                if (mat) mat.roughness = 0.8;
+            }
         });
+        AssetManager.archerFbx = chiori;
+
+        // --- Load Enemy Skeleton ---
+        const skeleton = await loadFbx('/assets/models/lowpolyskeleton_rigged.fbx');
+        skeleton.scale.set(0.18, 0.18, 0.18); // slightly smaller than player
+        skeleton.rotation.x = -Math.PI / 2;
+        skeleton.rotation.y = 0;
+        skeleton.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+            }
+        });
+        AssetManager.skeletonFbx = skeleton;
     }
 
     public static getArcherModel(): { model: THREE.Object3D, mixer?: THREE.AnimationMixer, actionRun?: THREE.AnimationAction } {
-        if (!AssetManager.archerFbx) throw new Error("Archer model not preloaded!");
+        if (!AssetManager.archerFbx) return { model: new THREE.Group() };
         const cloned = SkeletonUtils.clone(AssetManager.archerFbx);
 
-        let mixer;
-        let actionRun;
-        // Search if Chiori has baked animations
-        if (AssetManager.archerFbx.animations && AssetManager.archerFbx.animations.length > 0) {
+        let mixer: THREE.AnimationMixer | undefined;
+        let actionRun: THREE.AnimationAction | undefined;
+        if (AssetManager.archerFbx.animations?.length > 0) {
             mixer = new THREE.AnimationMixer(cloned);
             actionRun = mixer.clipAction(AssetManager.archerFbx.animations[0]);
             actionRun.play();
         }
 
         return { model: cloned, mixer, actionRun };
+    }
+
+    public static getSkeletonModel(): { model: THREE.Object3D, mixer?: THREE.AnimationMixer } {
+        if (!AssetManager.skeletonFbx) return { model: new THREE.Group() };
+        const cloned = SkeletonUtils.clone(AssetManager.skeletonFbx);
+
+        let mixer: THREE.AnimationMixer | undefined;
+        if (AssetManager.skeletonFbx.animations?.length > 0) {
+            mixer = new THREE.AnimationMixer(cloned);
+            // Play walk/idle (first animation clip)
+            mixer.clipAction(AssetManager.skeletonFbx.animations[0]).play();
+        }
+
+        return { model: cloned, mixer };
     }
 }

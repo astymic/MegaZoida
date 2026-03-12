@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Player } from './Player';
+import { AssetManager } from './AssetManager';
 
 export class Enemy {
     public x: number;
@@ -60,6 +61,24 @@ export class Enemy {
         this.mesh.receiveShadow = true;
         this.scene.add(this.mesh);
 
+        // Attach skeleton FBX model if available
+        if (AssetManager.skeletonFbx) {
+            const { model, mixer } = AssetManager.getSkeletonModel();
+            model.position.set(0, -this.radius, 0);
+
+            // Scale bosses bigger
+            const modelScale = this.isBoss ? 1.6 : 1.0;
+            model.scale.multiplyScalar(modelScale);
+
+            this.mesh.add(model);
+
+            // Hide the box geometry so only skeleton shows
+            material.visible = false;
+
+            // Store mixer for animation updates
+            (this as any)._skeletonMixer = mixer;
+        }
+
         // Health Bar setup
         this.hpGroup = new THREE.Group();
         this.scene.add(this.hpGroup);
@@ -94,6 +113,11 @@ export class Enemy {
         }
 
         this.mesh.position.set(this.x, this.radius, this.y);
+
+        // Advance skeleton animation if present
+        if ((this as any)._skeletonMixer) {
+            (this as any)._skeletonMixer.update(dt);
+        }
 
         // Simple rolling animation
         this.mesh.rotation.x += this.speed * dt * 0.01;
