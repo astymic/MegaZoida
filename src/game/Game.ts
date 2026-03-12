@@ -50,7 +50,7 @@ export class Game {
 
     // TPS Camera Control
     private cameraAngle: number = 0;
-    private cameraPitch: number = Math.PI / 6; // ~30 degrees
+    private cameraPitch: number = Math.PI / 3.5; // ~51 degrees — good third-person view
     private isDragging: boolean = false;
     private previousMousePosition = { x: 0, y: 0 };
 
@@ -70,14 +70,18 @@ export class Game {
         this.renderer.shadowMap.enabled = true;
         this.container.appendChild(this.renderer.domElement);
 
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        // Lighting — bright so FBX models without texture maps are visible
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
         this.scene.add(ambientLight);
 
-        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        dirLight.position.set(100, 300, 100);
-        dirLight.castShadow = true;
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        dirLight.position.set(500, 800, 300);
+        // Disable shadow casting entirely — saves massive GPU time on mobile
+        dirLight.castShadow = false;
         this.scene.add(dirLight);
+
+        // Kill shadowmap completely on renderer for mobile
+        this.renderer.shadowMap.enabled = false;
 
         // Ground + Mountain FBX terrain; loaded asynchronously
         this.loadMountainTerrain();
@@ -187,12 +191,12 @@ export class Game {
 
             // --- Decorations: optimized for mobile/Android performance ---
             const decorFiles = [
-                { path: '/assets/models/Mountain/Tree01.fbx', count: 15, scale: 2.5 },
-                { path: '/assets/models/Mountain/Rock01.fbx', count: 10, scale: 2.0 },
-                { path: '/assets/models/Mountain/Rock02.fbx', count: 8, scale: 1.8 },
-                { path: '/assets/models/Mountain/Bush01.fbx', count: 12, scale: 2.0 },
-                { path: '/assets/models/Mountain/Grass01.fbx', count: 15, scale: 1.5 },
-                { path: '/assets/models/Mountain/Flower01.fbx', count: 8, scale: 1.5 },
+                { path: '/assets/models/Mountain/Tree01.fbx', count: 12, scale: 0.4 },
+                { path: '/assets/models/Mountain/Rock01.fbx', count: 8, scale: 0.35 },
+                { path: '/assets/models/Mountain/Rock02.fbx', count: 6, scale: 0.3 },
+                { path: '/assets/models/Mountain/Bush01.fbx', count: 10, scale: 0.3 },
+                { path: '/assets/models/Mountain/Grass01.fbx', count: 12, scale: 0.2 },
+                { path: '/assets/models/Mountain/Flower01.fbx', count: 6, scale: 0.2 },
             ];
 
             for (const def of decorFiles) {
