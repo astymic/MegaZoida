@@ -24,10 +24,10 @@ export class CoinDrop {
         this.scene.add(this.mesh);
     }
 
-    public update(dt: number) {
+    public update(dt: number, baseHeight: number = 0) {
         this.timeAlive += dt;
         // Spinning coin
-        this.mesh.position.set(this.x, this.radius + Math.sin(this.timeAlive * 8) * 4, this.y);
+        this.mesh.position.set(this.x, baseHeight + this.radius + Math.sin(this.timeAlive * 8) * 4, this.y);
         this.mesh.rotation.z += dt * 3;
     }
 

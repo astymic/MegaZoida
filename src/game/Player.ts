@@ -46,7 +46,8 @@ export class Player {
     private scene: THREE.Scene;
 
     private mixer?: THREE.AnimationMixer;
-    private actionRun?: THREE.AnimationAction;
+    private actionWalk?: THREE.AnimationAction;
+    private actionIdle?: THREE.AnimationAction;
 
     constructor(scene: THREE.Scene, x: number, y: number, type: HeroType = 'human') {
         this.scene = scene;
@@ -62,11 +63,15 @@ export class Player {
             this.attackDamage = 15;
             this.moveSpeed = 160;
             this.attackSpeed = 0.8;
+            this.radius = 22;
         } else if (type === 'archer') {
             this.maxHp = 80;
             this.hp = 80;
             this.moveSpeed = 240;
             this.attackSpeed = 1.3;
+            this.radius = 18;
+        } else {
+            this.radius = 19;
         }
 
         const geometry = new THREE.SphereGeometry(this.radius, 32, 32);
@@ -85,22 +90,20 @@ export class Player {
         this.directionIndicator.position.set(0, 0, this.radius);
         this.mesh.add(this.directionIndicator);
 
-        if (this.heroType === 'archer') {
-            material.visible = false;
-            this.directionIndicator.visible = false;
+        material.visible = false;
+        this.directionIndicator.visible = false;
 
-            const archerData = AssetManager.getArcherModel();
+        const heroData = AssetManager.getModel(this.heroType);
 
-            // Adjust to the player bounds
-            archerData.model.position.y = -this.radius;
+        heroData.model.position.y = -this.radius;
 
-            if (archerData.mixer && archerData.actionRun) {
-                this.mixer = archerData.mixer;
-                this.actionRun = archerData.actionRun;
-            }
-
-            this.mesh.add(archerData.model);
+        if (heroData.mixer) {
+            this.mixer = heroData.mixer;
+            this.actionWalk = heroData.actionWalk;
+            this.actionIdle = heroData.actionIdle;
         }
+
+        this.mesh.add(heroData.model);
     }
 
     public update(dt: number, moveVector: { x: number; y: number }, timeSeconds: number, enemies: Enemy[], addProjectile: (p: any) => void, scene: THREE.Scene) {
@@ -131,9 +134,10 @@ export class Player {
         }
 
         // Handle animation state
-        if (this.actionRun) {
+        if (this.actionWalk && this.actionIdle) {
             const isMoving = moveVector.x !== 0 || moveVector.y !== 0;
-            this.actionRun.setEffectiveWeight(isMoving ? 1 : 0);
+            this.actionWalk.setEffectiveWeight(isMoving ? 1 : 0);
+            this.actionIdle.setEffectiveWeight(isMoving ? 0 : 1);
         }
 
         // Handle Weapon Attacks

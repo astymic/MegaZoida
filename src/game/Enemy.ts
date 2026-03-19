@@ -22,6 +22,8 @@ export class Enemy {
     public hpBar: THREE.Mesh;
     private scene: THREE.Scene;
 
+    public walkWeight: number = 1.0;
+
     constructor(scene: THREE.Scene, x: number, y: number, level: number = 1, isBoss: boolean = false) {
         this.scene = scene;
         this.x = x;
@@ -61,23 +63,18 @@ export class Enemy {
         this.mesh.receiveShadow = true;
         this.scene.add(this.mesh);
 
-        // Attach skeleton FBX model if available
-        if (AssetManager.skeletonFbx) {
-            const { model, mixer } = AssetManager.getSkeletonModel();
-            model.position.set(0, -this.radius, 0);
+        const { model, mixer, actionWalk, actionIdle } = AssetManager.getModel('skeleton');
+        model.position.set(0, -this.radius, 0);
 
-            // Scale bosses bigger
-            const modelScale = this.isBoss ? 1.6 : 1.0;
-            model.scale.multiplyScalar(modelScale);
+        const scaleRatio = this.isBoss ? (this.radius / 15.0) : 1.0;
+        model.scale.multiplyScalar(scaleRatio);
 
-            this.mesh.add(model);
+        this.mesh.add(model);
+        material.visible = false;
 
-            // Hide the box geometry so only skeleton shows
-            material.visible = false;
-
-            // Store mixer for animation updates
-            (this as any)._skeletonMixer = mixer;
-        }
+        (this as any)._skeletonMixer = mixer;
+        (this as any)._skeletonActionWalk = actionWalk;
+        (this as any)._skeletonActionIdle = actionIdle;
 
         // Health Bar setup
         this.hpGroup = new THREE.Group();
@@ -102,37 +99,46 @@ export class Enemy {
     }
 
     public update(dt: number, player: Player) {
-        // Simple chasing AI
         const dx = player.x - this.x;
         const dy = player.y - this.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+        const distSq = dx * dx + dy * dy;
+        const dist = Math.sqrt(distSq);
+        const touchDist = player.radius + this.radius;
 
-        if (dist > 0) {
+        let isWalking = false;
+
+        if (dist > touchDist) {
             this.x += (dx / dist) * this.speed * dt;
             this.y += (dy / dist) * this.speed * dt;
+            isWalking = true;
         }
 
         this.mesh.position.set(this.x, this.radius, this.y);
 
-        // Advance skeleton animation if present
         if ((this as any)._skeletonMixer) {
             (this as any)._skeletonMixer.update(dt);
         }
 
-        // Rotate skeleton to face player direction (no tumbling)
-        if (AssetManager.skeletonFbx) {
-            const dx = player.x - this.x;
-            const dz = player.y - this.y;
-            if (dx !== 0 || dz !== 0) {
-                this.mesh.rotation.y = Math.atan2(dx, dz);
+        const aWalk = (this as any)._skeletonActionWalk;
+        const aIdle = (this as any)._skeletonActionIdle;
+        if (aWalk && aIdle) {
+            if (isWalking) {
+                this.walkWeight = Math.min(1.0, this.walkWeight + dt / 0.1);
+            } else {
+                this.walkWeight = Math.max(0.0, this.walkWeight - dt / 0.1);
             }
+            aWalk.setEffectiveWeight(this.walkWeight);
+            aIdle.setEffectiveWeight(1.0 - this.walkWeight);
         }
 
-        // Update HP bar
+        if (dist > 0) {
+            this.mesh.rotation.y = Math.atan2(dx, dy);
+        }
+
         if (this.hp < this.maxHp && this.hp > 0) {
             this.hpGroup.visible = true;
-            this.hpGroup.position.set(this.x, this.radius * 2 + 10, this.y);
-            this.hpGroup.rotation.x = -Math.PI / 4; // Tilt backward for TPS view
+            this.hpGroup.position.set(this.x, this.mesh.position.y + this.radius + 10, this.y);
+            this.hpGroup.rotation.x = -Math.PI / 4;
             this.hpBar.scale.x = Math.max(0, this.hp / this.maxHp);
         } else {
             this.hpGroup.visible = false;

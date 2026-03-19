@@ -23,9 +23,9 @@ export class ExpDrop {
         this.scene.add(this.mesh);
     }
 
-    public update(dt: number) {
+    public update(dt: number, baseHeight: number = 0) {
         this.timeAlive += dt;
-        this.mesh.position.set(this.x, this.radius + Math.sin(this.timeAlive * 5) * 5, this.y);
+        this.mesh.position.set(this.x, baseHeight + this.radius + Math.sin(this.timeAlive * 5) * 5, this.y);
         this.mesh.rotation.y += dt;
     }
 
