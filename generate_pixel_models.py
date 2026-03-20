@@ -120,33 +120,31 @@ def build_pixel_character(char_name, size_mult, head_col, body_col, arm_col, leg
     bpy.ops.object.mode_set(mode='POSE')
     
     # Idle
-    for i in range(1, 41):
-        set_kf("Idle", i, {"Leg_L": 0, "Leg_R": 0, "Arm_L": 0, "Arm_R": 0})
+    set_kf("Idle", 1, {"Leg_L": 0, "Leg_R": 0, "Arm_L": 0, "Arm_R": 0})
+    set_kf("Idle", 40, {"Leg_L": 0, "Leg_R": 0, "Arm_L": 0, "Arm_R": 0})
 
-    # Walk (Wide steps, guaranteed step interpolation by baking frames)
+    # Walk (Wide steps)
     w = 1.3
-    for i in range(1, 11):
-        set_kf("Walk", i, {"Leg_L": -w, "Leg_R": w, "Arm_L": w, "Arm_R": -w}) # Right Leg Forward
-    for i in range(11, 21):
-        set_kf("Walk", i, {"Leg_L": 0, "Leg_R": 0, "Arm_L": 0, "Arm_R": 0})   # Stand
-    for i in range(21, 31):
-        set_kf("Walk", i, {"Leg_L": w, "Leg_R": -w, "Arm_L": -w, "Arm_R": w}) # Left Leg Forward
-    for i in range(31, 41):
-        set_kf("Walk", i, {"Leg_L": 0, "Leg_R": 0, "Arm_L": 0, "Arm_R": 0})   # Stand
+    set_kf("Walk", 1, {"Leg_L": -w, "Leg_R": w, "Arm_L": w, "Arm_R": -w})
+    set_kf("Walk", 10, {"Leg_L": 0, "Leg_R": 0, "Arm_L": 0, "Arm_R": 0})
+    set_kf("Walk", 20, {"Leg_L": w, "Leg_R": -w, "Arm_L": -w, "Arm_R": w})
+    set_kf("Walk", 30, {"Leg_L": 0, "Leg_R": 0, "Arm_L": 0, "Arm_R": 0})
+    set_kf("Walk", 40, {"Leg_L": -w, "Leg_R": w, "Arm_L": w, "Arm_R": -w})
 
     bpy.context.scene.frame_start = 1
     bpy.context.scene.frame_end = 40
     bpy.ops.object.mode_set(mode='OBJECT')
 
-    for action in bpy.data.actions:
-        track = arm_obj.animation_data.nla_tracks.new()
-        track.name = action.name
-        track.strips.new(action.name, int(action.frame_range[0]), action)
-        
-    bpy.ops.export_scene.fbx(filepath=export_path, use_selection=False, bake_anim=True, add_leaf_bones=False)
+    bpy.ops.export_scene.fbx(
+        filepath=export_path, 
+        use_selection=False, 
+        bake_anim=True, 
+        bake_anim_use_nla_strips=False, 
+        bake_anim_use_all_actions=True, 
+        add_leaf_bones=False
+    )
 
 p = r"c:\Users\chapa\Desktop\MegaZoida\public\assets\models\\"
-build_pixel_character("Skeleton", 15.0, (0.8,0.8,0.8,1), (0.7,0.7,0.7,1), (0.8,0.8,0.8,1), (0.6,0.6,0.6,1), p+"Enemy_Skeleton.fbx")
 build_pixel_character("Knight", 20.0, (0.6,0.6,0.6,1), (0.1,0.3,0.8,1), (0.4,0.4,0.4,1), (0.3,0.3,0.3,1), p+"Hero_Knight.fbx")
 build_pixel_character("Archer", 20.0, (0.8,0.6,0.2,1), (0.2,0.6,0.2,1), (0.6,0.3,0.1,1), (0.3,0.2,0.1,1), p+"Hero_Archer.fbx")
 build_pixel_character("Human", 20.0, (0.9,0.7,0.5,1), (0.8,0.2,0.2,1), (0.9,0.7,0.5,1), (0.2,0.3,0.8,1), p+"Hero_Human.fbx")

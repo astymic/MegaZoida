@@ -5,6 +5,10 @@ import { AssetManager } from './AssetManager';
 
 export type HeroType = 'human' | 'knight' | 'archer';
 
+// How many world-units the character travels per full walk cycle.
+// Tune this single constant if the animation still looks off after the fix.
+const WALK_CYCLE_DISTANCE = 28;
+
 export class Player {
     public x: number;
     public y: number;
@@ -24,8 +28,8 @@ export class Player {
     public enemiesKilled: number = 0;
     public coinsEarned: number = 0;
 
-    public moveSpeed: number = 200; // pixels per second
-    public attackSpeed: number = 1.0; // attacks per second
+    public moveSpeed: number = 200;
+    public attackSpeed: number = 1.0;
     public attackDamage: number = 10;
     public attackRange: number = 150;
     public defense: number = 0;
@@ -34,7 +38,6 @@ export class Player {
     public maxWeapons: number = 6;
     public heroType: HeroType;
 
-    // State
     private lastAttackTime: number = 0;
     public onLevelUp?: () => void;
     public facingAngle: number = 0;
@@ -49,13 +52,15 @@ export class Player {
     private actionWalk?: THREE.AnimationAction;
     private actionIdle?: THREE.AnimationAction;
 
+    // Smooth weight transition for blend
+    private walkWeight: number = 0;
+
     constructor(scene: THREE.Scene, x: number, y: number, type: HeroType = 'human') {
         this.scene = scene;
         this.x = x;
         this.y = y;
         this.heroType = type;
 
-        // Apply Hero scaling
         if (type === 'knight') {
             this.maxHp = 150;
             this.hp = 150;
@@ -82,19 +87,18 @@ export class Player {
         this.mesh.receiveShadow = true;
         this.scene.add(this.mesh);
 
-        // Add visual indicator of direction (a "nose")
+        // Direction indicator nose
         const dirGeo = new THREE.BoxGeometry(8, 8, 20);
         const dirMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
         this.directionIndicator = new THREE.Mesh(dirGeo, dirMat);
-        // Position it "in front" of the sphere on the Z axis
         this.directionIndicator.position.set(0, 0, this.radius);
         this.mesh.add(this.directionIndicator);
 
+        // Hide placeholder geometry — model drives the visuals
         material.visible = false;
         this.directionIndicator.visible = false;
 
         const heroData = AssetManager.getModel(this.heroType);
-
         heroData.model.position.y = -this.radius;
 
         if (heroData.mixer) {
@@ -106,9 +110,16 @@ export class Player {
         this.mesh.add(heroData.model);
     }
 
-    public update(dt: number, moveVector: { x: number; y: number }, timeSeconds: number, enemies: Enemy[], addProjectile: (p: any) => void, scene: THREE.Scene) {
+    public update(
+        dt: number,
+        moveVector: { x: number; y: number },
+        timeSeconds: number,
+        enemies: Enemy[],
+        addProjectile: (p: any) => void,
+        scene: THREE.Scene
+    ) {
+        // Invincibility frames flash
         const mat = this.mesh.material as THREE.MeshStandardMaterial;
-
         if (this.iFrameTimer > 0) {
             this.iFrameTimer -= dt;
             mat.opacity = 0.5;
@@ -118,35 +129,46 @@ export class Player {
         }
 
         // Movement
+        const isMoving = moveVector.x !== 0 || moveVector.y !== 0;
         this.x += moveVector.x * this.moveSpeed * dt;
         this.y += moveVector.y * this.moveSpeed * dt;
 
-        if (moveVector.x !== 0 || moveVector.y !== 0) {
+        if (isMoving) {
             this.facingAngle = Math.atan2(moveVector.y, moveVector.x);
         }
 
-        // Sync 3D Mesh position and rotation (yaw)
+        // Sync 3D mesh
         this.mesh.position.set(this.x, this.radius, this.y);
-        this.mesh.rotation.y = -this.facingAngle + Math.PI / 2; // Offset for atan2 Z-axis correlation
+        this.mesh.rotation.y = -this.facingAngle + Math.PI / 2;
 
+        // --- Animation ---
         if (this.mixer) {
             this.mixer.update(dt);
         }
 
-        // Handle animation state
         if (this.actionWalk && this.actionIdle) {
-            const isMoving = moveVector.x !== 0 || moveVector.y !== 0;
-            this.actionWalk.setEffectiveWeight(isMoving ? 1 : 0);
-            this.actionIdle.setEffectiveWeight(isMoving ? 0 : 1);
+            // Smooth blend instead of hard snap
+            const targetWeight = isMoving ? 1 : 0;
+            this.walkWeight += (targetWeight - this.walkWeight) * Math.min(1, dt * 10);
+
+            this.actionWalk.setEffectiveWeight(this.walkWeight);
+            this.actionIdle.setEffectiveWeight(1 - this.walkWeight);
+
+            // Scale walk animation speed to actual movement speed so feet don't slide.
+            // timeScale = (moveSpeed / WALK_CYCLE_DISTANCE) means one full cycle
+            // covers exactly WALK_CYCLE_DISTANCE world units.
+            if (isMoving) {
+                const desiredTimeScale = this.moveSpeed / WALK_CYCLE_DISTANCE;
+                this.actionWalk.timeScale = desiredTimeScale;
+            }
         }
 
-        // Handle Weapon Attacks
+        // Weapons
         if (this.weapons.length > 0) {
             for (const w of this.weapons) {
                 w.tryAttack(dt, timeSeconds, this, enemies, addProjectile, scene);
             }
         } else {
-            // Base attack fallback if no weapons
             if (timeSeconds - this.lastAttackTime >= 1 / this.attackSpeed) {
                 this.baseAutoAttack(enemies);
                 this.lastAttackTime = timeSeconds;
@@ -154,11 +176,9 @@ export class Player {
         }
     }
 
-    // Fallback if no weapons
     private baseAutoAttack(enemies: Enemy[]) {
         let closestDist = Infinity;
         let target: Enemy | null = null;
-
         for (const enemy of enemies) {
             const dx = enemy.x - this.x;
             const dy = enemy.y - this.y;
@@ -168,10 +188,7 @@ export class Player {
                 target = enemy;
             }
         }
-
-        if (target) {
-            target.hp -= this.attackDamage;
-        }
+        if (target) target.hp -= this.attackDamage;
     }
 
     public addWeapon(newWeapon: Weapon) {
@@ -184,9 +201,7 @@ export class Player {
 
     public addXp(amount: number) {
         this.xp += amount;
-        if (this.xp >= this.xpToNextLevel) {
-            this.levelUp();
-        }
+        if (this.xp >= this.xpToNextLevel) this.levelUp();
     }
 
     public addCoins(amount: number) {
@@ -199,9 +214,6 @@ export class Player {
         this.level++;
         this.xpToNextLevel = Math.floor(this.xpToNextLevel * 1.5);
         this.hp = this.maxHp;
-
-        if (this.onLevelUp) {
-            this.onLevelUp();
-        }
+        if (this.onLevelUp) this.onLevelUp();
     }
 }
