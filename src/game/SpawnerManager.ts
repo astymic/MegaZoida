@@ -1,14 +1,13 @@
 import * as THREE from 'three';
 import { EntityManager } from './EntityManager';
-import { Enemy } from './Enemy';
 import { Chest } from './Chest';
 
 export class SpawnerManager {
     private scene: THREE.Scene;
     private entityManager: EntityManager;
 
-    // Config
-    private maxEnemies = 50;
+    // Config - much higher now with perf fixes!
+    private maxEnemies = 150;
     private chestSpawnInterval = 30.0;
 
     private lastSpawnTime = 0;
@@ -51,7 +50,7 @@ export class SpawnerManager {
         const y = p.y + Math.sin(angle) * dist;
 
         const level = 1 + Math.floor(timeSeconds / 60);
-        this.entityManager.enemies.push(new Enemy(this.scene, x, y, level));
+        this.entityManager.spawnEnemy(x, y, level, false);
     }
 
     public spawnBoss(timeSeconds: number) {
@@ -62,7 +61,7 @@ export class SpawnerManager {
         const y = p.y + Math.sin(angle) * dist;
 
         const level = 1 + Math.floor(timeSeconds / 60);
-        this.entityManager.enemies.push(new Enemy(this.scene, x, y, level, true));
+        this.entityManager.spawnEnemy(x, y, level, true);
     }
 
     private spawnChest() {

@@ -7,6 +7,73 @@ import { Chest } from './Chest';
 import { Projectile } from './Projectile';
 import { EnvironmentManager } from './EnvironmentManager';
 
+class SpatialGrid {
+    private cells = new Map<number, Enemy[]>();
+    private cellSize: number;
+    private invCell: number;
+
+    constructor(cellSize = 80) {
+        this.cellSize = cellSize;
+        this.invCell = 1 / cellSize;
+    }
+
+    private key(x: number, y: number): number {
+        const cx = Math.floor(x * this.invCell);
+        const cy = Math.floor(y * this.invCell);
+        // Cantor pairing
+        return ((cx + cy) * (cx + cy + 1) >> 1) + cy;
+    }
+
+    public rebuild(enemies: Enemy[]) {
+        this.cells.clear();
+        for (const e of enemies) {
+            const k = this.key(e.x, e.y);
+            let cell = this.cells.get(k);
+            if (!cell) { cell = []; this.cells.set(k, cell); }
+            cell.push(e);
+        }
+    }
+
+    public getNearby(x: number, y: number): Enemy[] {
+        const result: Enemy[] = [];
+        const cs = this.cellSize;
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                const cell = this.cells.get(this.key(x + dx * cs, y + dy * cs));
+                if (cell) {
+                    for (const e of cell) result.push(e);
+                }
+            }
+        }
+        return result;
+    }
+}
+
+class EnemyPool {
+    private pool: Enemy[] = [];
+    private scene: THREE.Scene;
+
+    constructor(scene: THREE.Scene) {
+        this.scene = scene;
+    }
+
+    public acquire(x: number, y: number, level: number, isBoss: boolean): Enemy {
+        if (this.pool.length > 0) {
+            const e = this.pool.pop()!;
+            e.spawn(x, y, level, isBoss);
+            return e;
+        }
+        const newE = new Enemy(this.scene);
+        newE.spawn(x, y, level, isBoss);
+        return newE;
+    }
+
+    public release(e: Enemy) {
+        e.despawn();
+        this.pool.push(e);
+    }
+}
+
 export class EntityManager {
     public player!: Player;
     public enemies: Enemy[] = [];
@@ -21,9 +88,13 @@ export class EntityManager {
     private collisionTimer = 0;
     private readonly COLLISION_INTERVAL = 0.05;
 
+    private spatialGrid = new SpatialGrid(80);
+    private enemyPool: EnemyPool;
+
     constructor(scene: THREE.Scene, envManager: EnvironmentManager) {
         this.scene = scene;
         this.envManager = envManager;
+        this.enemyPool = new EnemyPool(scene);
     }
 
     public initPlayer(heroType: 'human' | 'knight' | 'archer', onLevelUp: () => void) {
@@ -32,8 +103,17 @@ export class EntityManager {
         return this.player;
     }
 
+    public spawnEnemy(x: number, y: number, level: number, isBoss: boolean = false) {
+        const e = this.enemyPool.acquire(x, y, level, isBoss);
+        this.enemies.push(e);
+        return e;
+    }
+
     public clear() {
-        this.enemies.forEach(e => e.remove());
+        // Return to pool instead of destroying meshes
+        for (const e of this.enemies) this.enemyPool.release(e);
+        this.enemies = [];
+
         this.expDrops.forEach(e => e.remove());
         this.coinDrops.forEach(c => c.remove());
         this.chests.forEach(c => c.remove());
@@ -46,14 +126,13 @@ export class EntityManager {
             }
         }
 
-        this.enemies = [];
         this.expDrops = [];
         this.coinDrops = [];
         this.chests = [];
         this.projectiles = [];
     }
 
-    public update(dt: number, timeSeconds: number, inputMove: { x: number; y: number }, cameraAngle: number, openChestCallback: () => void) {
+    public update(dt: number, timeSeconds: number, inputMove: { x: number; y: number }, cameraAngle: number, camera: THREE.PerspectiveCamera, openChestCallback: () => void) {
         // Translate input based on camera yaw angle
         const move = {
             x: inputMove.x * Math.cos(cameraAngle) + inputMove.y * Math.sin(cameraAngle),
@@ -69,10 +148,10 @@ export class EntityManager {
         this.player.mesh.position.y = ph + this.player.radius;
 
         // Obstacle collision: push player out of trees/rocks
-        const pr = this.player.radius + 5; // player collision radius
+        const pr = this.player.radius + 5;
         for (const obs of this.envManager.obstacles) {
             const dx = this.player.x - obs.x;
-            const dz = this.player.y - obs.z; // player.y maps to world Z
+            const dz = this.player.y - obs.z;
             const distSq = dx * dx + dz * dz;
             const minDist = pr + obs.r;
             if (distSq < minDist * minDist && distSq > 0) {
@@ -84,7 +163,7 @@ export class EntityManager {
         }
 
         this.updateProjectiles(dt);
-        this.updateEnemies(dt);
+        this.updateEnemies(dt, camera);
         this.updateDropsAndChests(dt, openChestCallback);
     }
 
@@ -102,6 +181,8 @@ export class EntityManager {
             }
 
             for (const enemy of this.enemies) {
+                if (!enemy.mesh.visible) continue;
+
                 const dx = enemy.x - proj.x;
                 const dy = enemy.y - proj.y;
                 const distSq = dx * dx + dy * dy;
@@ -123,11 +204,11 @@ export class EntityManager {
         }
     }
 
-    private updateEnemies(dt: number) {
+    private updateEnemies(dt: number, camera: THREE.PerspectiveCamera) {
         const pr = this.player.radius;
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const enemy = this.enemies[i];
-            enemy.update(dt, this.player);
+            enemy.update(dt, this.player, camera.position);
 
             const eh = this.envManager.getTerrainHeightAt(enemy.x, enemy.y);
             enemy.mesh.position.y = eh + enemy.radius;
@@ -140,8 +221,8 @@ export class EntityManager {
 
             if (pDistSq <= pCollDist * pCollDist) {
                 if (this.player.iFrameTimer <= 0) {
-                    this.player.hp -= enemy.damage; // Full bump damage
-                    this.player.iFrameTimer = 0.5; // Half second iframe
+                    this.player.hp -= enemy.damage;
+                    this.player.iFrameTimer = 0.5;
                 }
             }
 
@@ -152,7 +233,8 @@ export class EntityManager {
                 const coinMultiplier = 1 + Math.floor(this.player.level / 10);
                 this.coinDrops.push(new CoinDrop(this.scene, enemy.x + 10, enemy.y + 10, 1 * coinMultiplier));
 
-                enemy.remove();
+                // Pooled despawn instead of .remove()
+                this.enemyPool.release(enemy);
                 this.enemies.splice(i, 1);
             }
         }
@@ -161,10 +243,12 @@ export class EntityManager {
         this.collisionTimer += dt;
         if (this.collisionTimer >= this.COLLISION_INTERVAL) {
             this.collisionTimer = 0;
-            for (let i = 0; i < this.enemies.length; i++) {
-                for (let j = i + 1; j < this.enemies.length; j++) {
-                    const e1 = this.enemies[i];
-                    const e2 = this.enemies[j];
+            this.spatialGrid.rebuild(this.enemies);
+
+            for (const e1 of this.enemies) {
+                const nearby = this.spatialGrid.getNearby(e1.x, e1.y);
+                for (const e2 of nearby) {
+                    if (e1 === e2) continue;
                     const dx = e2.x - e1.x;
                     const dy = e2.y - e1.y;
                     const distSq = dx * dx + dy * dy;
@@ -172,14 +256,14 @@ export class EntityManager {
 
                     if (distSq < minDist * minDist && distSq > 0) {
                         const dist = Math.sqrt(distSq);
-                        const overlap = minDist - dist;
+                        const overlap = (minDist - dist) * 0.5;
                         const nx = dx / dist;
                         const ny = dy / dist;
 
-                        e1.x -= nx * (overlap / 2);
-                        e1.y -= ny * (overlap / 2);
-                        e2.x += nx * (overlap / 2);
-                        e2.y += ny * (overlap / 2);
+                        e1.pushX -= nx * overlap;
+                        e1.pushY -= ny * overlap;
+                        e2.pushX += nx * overlap;
+                        e2.pushY += ny * overlap;
                     }
                 }
             }
