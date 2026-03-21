@@ -1,150 +1,323 @@
+"""
+MegaZoida — Pixel Character Generator (Fixed)
+==============================================
+Architecture: Armature is created FIRST, then each mesh part is parented
+to the armature with a vertex-group weight paint that covers all vertices.
+NO bpy.ops.object.join() is used — join destroys vertex groups in Blender.
+
+Correct order:
+  1. Create armature + bones
+  2. Create each mesh part separately
+  3. Add Armature modifier to each mesh
+  4. Create vertex group named after the bone, assign weight 1.0 to all verts
+  5. Bake animations to NLA tracks
+  6. Export FBX (bake_anim=True, bake_anim_step=1)
+"""
+
 import bpy
 import bmesh
 import math
-from mathutils import Vector
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def clear_scene():
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
-def create_material(name, color):
+
+def make_material(name: str, color: tuple) -> bpy.types.Material:
     mat = bpy.data.materials.new(name=name)
     mat.use_nodes = True
-    mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = color
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    bsdf.inputs["Base Color"].default_value = color
+    # No specular — flat pixel look
+    bsdf.inputs["Roughness"].default_value = 1.0
+    if "Specular IOR Level" in bsdf.inputs:
+        bsdf.inputs["Specular IOR Level"].default_value = 0.0
+    elif "Specular" in bsdf.inputs:
+        bsdf.inputs["Specular"].default_value = 0.0
     return mat
 
-def create_box(name, loc, size, mat):
+
+def make_box(name: str, location: tuple, size: tuple, mat: bpy.types.Material) -> bpy.types.Object:
+    """Create a box mesh at world-space `location` with given `size`."""
     mesh = bpy.data.meshes.new(name)
-    obj = bpy.data.objects.new(name, mesh)
+    obj  = bpy.data.objects.new(name, mesh)
     bpy.context.collection.objects.link(obj)
-    
+
     bm = bmesh.new()
     bmesh.ops.create_cube(bm, size=1.0)
-    bmesh.ops.scale(bm, vec=(size[0], size[1], size[2]), verts=bm.verts)
+    bmesh.ops.scale(bm, vec=size, verts=bm.verts)
     bm.to_mesh(mesh)
     bm.free()
-    
-    obj.data.materials.append(mat)
-    obj.location = loc
+
+    mesh.materials.append(mat)
+    obj.location = location
+    # Apply location so vertex positions are in world space — important for
+    # correct bone-relative deformation after parenting.
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    obj.select_set(False)
     return obj
 
-def assign_weight(obj, bone_name):
-    vg = obj.vertex_groups.new(name=bone_name)
-    vg.add(range(len(obj.data.vertices)), 1.0, 'REPLACE')
 
-def build_pixel_character(char_name, size_mult, head_col, body_col, arm_col, leg_col, export_path):
-    clear_scene()
-    
-    mh = create_material(char_name+"_Head", head_col)
-    mb = create_material(char_name+"_Body", body_col)
-    ma = create_material(char_name+"_Arm", arm_col)
-    ml = create_material(char_name+"_Leg", leg_col)
+def parent_mesh_to_bone(mesh_obj: bpy.types.Object,
+                         armature_obj: bpy.types.Object,
+                         bone_name: str):
+    """
+    Parent mesh_obj to armature_obj and assign all vertices to bone_name
+    with weight 1.0.  This is the correct way to do rigid bone parenting
+    in Blender's Python API (not bpy.ops.object.parent_set which needs
+    context hacks).
+    """
+    # Add Armature modifier
+    mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
+    mod.object = armature_obj
 
-    total_height = 2.0 * size_mult
-    w = 1.6 * size_mult
-    
-    h = total_height / 10.0
-    ws = w / 10.0
-    depth = ws * 1.5 
-    
-    head = create_box(char_name+"_Head", (0, 0, 9*h), (3.6*ws, depth, 2*h), mh)
-    assign_weight(head, "Head")
-    
-    body = create_box(char_name+"_Body", (0, 0, 6*h), (3.6*ws, depth, 4*h), mb)
-    assign_weight(body, "Root")
-    
-    arm_l = create_box(char_name+"_Arm_L", (-2.6*ws, 0, 6*h), (1.2*ws, depth, 3.5*h), ma)
-    assign_weight(arm_l, "Arm_L")
-    
-    arm_r = create_box(char_name+"_Arm_R", (2.6*ws, 0, 6*h), (1.2*ws, depth, 3.5*h), ma)
-    assign_weight(arm_r, "Arm_R")
-    
-    leg_l = create_box(char_name+"_Leg_L", (-1.0*ws, 0, 2*h), (1.2*ws, depth, 4*h), ml)
-    assign_weight(leg_l, "Leg_L")
-    
-    leg_r = create_box(char_name+"_Leg_R", (1.0*ws, 0, 2*h), (1.2*ws, depth, 4*h), ml)
-    assign_weight(leg_r, "Leg_R")
+    # Parent relationship (needed so FBX exporter sees the hierarchy)
+    mesh_obj.parent = armature_obj
+    mesh_obj.parent_type = 'OBJECT'
 
-    bpy.ops.object.select_all(action='DESELECT')
-    parts = [head, body, arm_l, arm_r, leg_l, leg_r]
-    for p in parts:
-        p.select_set(True)
-    bpy.context.view_layer.objects.active = body
-    bpy.ops.object.join()
-    body.name = char_name
+    # Vertex group = bone name, all verts weight 1.0
+    vg = mesh_obj.vertex_groups.new(name=bone_name)
+    all_vert_indices = [v.index for v in mesh_obj.data.vertices]
+    vg.add(all_vert_indices, 1.0, 'REPLACE')
 
-    bpy.ops.object.armature_add(enter_editmode=True, align='WORLD', location=(0, 0, 0))
-    arm_obj = bpy.context.active_object
+
+# ---------------------------------------------------------------------------
+# Armature builder
+# ---------------------------------------------------------------------------
+
+def create_armature(char_name: str, h: float, ws: float) -> bpy.types.Object:
+    """Create armature with 6 bones.  Returns the armature object."""
+    bpy.ops.object.armature_add(enter_editmode=True,
+                                align='WORLD',
+                                location=(0, 0, 0))
+    arm_obj      = bpy.context.active_object
     arm_obj.name = char_name + "_Rig"
-    armature = arm_obj.data
+    armature     = arm_obj.data
+    armature.name = char_name + "_Armature"
 
+    # Delete the default bone
     bpy.ops.armature.select_all(action='SELECT')
     bpy.ops.armature.delete()
 
-    def add_bone(name, head_loc, tail_loc, parent=None):
-        bone = armature.edit_bones.new(name)
-        bone.head = head_loc
-        bone.tail = tail_loc
-        if parent:
-            bone.parent = armature.edit_bones[parent]
+    def add_bone(name, head_pos, tail_pos, parent_name=None):
+        bone      = armature.edit_bones.new(name)
+        bone.head = head_pos
+        bone.tail = tail_pos
+        if parent_name:
+            bone.parent = armature.edit_bones[parent_name]
         return bone
 
-    add_bone("Root", (0, 0, 4*h), (0, 0, 6*h))
-    add_bone("Head", (0, 0, 8*h), (0, 0, 10*h), "Root")
-    add_bone("Leg_L", (-1.0*ws, 0, 4*h), (-1.0*ws, 0, 0), "Root")
-    add_bone("Leg_R", (1.0*ws, 0, 4*h), (1.0*ws, 0, 0), "Root")
-    add_bone("Arm_L", (-2.6*ws, 0, 7.5*h), (-2.6*ws, 0, 4*h), "Root")
-    add_bone("Arm_R", (2.6*ws, 0, 7.5*h), (2.6*ws, 0, 4*h), "Root")
+    # Root at hip height, drives torso
+    add_bone("Root",  (0,         0, 4*h),    (0,         0, 6*h))
+    # Head
+    add_bone("Head",  (0,         0, 8*h),    (0,         0, 10*h),  "Root")
+    # Legs hang DOWN from hip
+    add_bone("Leg_L", (-1.0*ws,  0, 4*h),    (-1.0*ws,  0,  0),    "Root")
+    add_bone("Leg_R", ( 1.0*ws,  0, 4*h),    ( 1.0*ws,  0,  0),    "Root")
+    # Arms hang DOWN from shoulder
+    add_bone("Arm_L", (-2.6*ws,  0, 7.5*h),  (-2.6*ws,  0, 4*h),   "Root")
+    add_bone("Arm_R", ( 2.6*ws,  0, 7.5*h),  ( 2.6*ws,  0, 4*h),   "Root")
 
     bpy.ops.object.mode_set(mode='OBJECT')
+    return arm_obj
 
-    # Explicitly attach using Modifier instead of AUTO
-    mod = body.modifiers.new(name="Armature", type='ARMATURE')
-    mod.object = arm_obj
-    body.parent = arm_obj
-    
-    def set_kf(action_name, frame, rx_dict):
-        if action_name not in bpy.data.actions:
-            act = bpy.data.actions.new(name=action_name)
-        else:
-            act = bpy.data.actions[action_name]
-            
-        arm_obj.animation_data_create()
-        arm_obj.animation_data.action = act
-        
-        for bone_name, rx in rx_dict.items():
-            pbo = arm_obj.pose.bones[bone_name]
-            pbo.rotation_mode = 'XYZ'
-            pbo.rotation_euler[0] = rx
-            pbo.keyframe_insert(data_path="rotation_euler", index=0, frame=frame)
 
+# ---------------------------------------------------------------------------
+# Animation baker
+# ---------------------------------------------------------------------------
+
+def bake_animations(arm_obj: bpy.types.Object, h: float, _ws: float):
+    """
+    Create Idle (1 frame) and Walk (40 frames, 4-key BEZIER) actions,
+    then push them to NLA so FBX bake_anim picks them up.
+    """
+    bpy.context.view_layer.objects.active = arm_obj
+    arm_obj.select_set(True)
     bpy.ops.object.mode_set(mode='POSE')
-    
-    # Idle
-    set_kf("Idle", 1, {"Leg_L": 0, "Leg_R": 0, "Arm_L": 0, "Arm_R": 0})
-    set_kf("Idle", 40, {"Leg_L": 0, "Leg_R": 0, "Arm_L": 0, "Arm_R": 0})
 
-    # Walk (Wide steps)
-    w = 1.3
-    set_kf("Walk", 1, {"Leg_L": -w, "Leg_R": w, "Arm_L": w, "Arm_R": -w})
-    set_kf("Walk", 10, {"Leg_L": 0, "Leg_R": 0, "Arm_L": 0, "Arm_R": 0})
-    set_kf("Walk", 20, {"Leg_L": w, "Leg_R": -w, "Arm_L": -w, "Arm_R": w})
-    set_kf("Walk", 30, {"Leg_L": 0, "Leg_R": 0, "Arm_L": 0, "Arm_R": 0})
-    set_kf("Walk", 40, {"Leg_L": -w, "Leg_R": w, "Arm_L": w, "Arm_R": -w})
+    # ── helpers ──────────────────────────────────────────────────────────
+
+    def get_action(name: str) -> bpy.types.Action:
+        if name in bpy.data.actions:
+            return bpy.data.actions[name]
+        return bpy.data.actions.new(name=name)
+
+    def set_bone_rx(frame: int, bone_name: str, angle: float):
+        pbone = arm_obj.pose.bones[bone_name]
+        pbone.rotation_mode = 'XYZ'
+        pbone.rotation_euler[0] = angle
+        pbone.keyframe_insert(data_path="rotation_euler", index=0, frame=frame)
+
+    def smooth_fcurves(action: bpy.types.Action):
+        """Set BEZIER + AUTO_CLAMPED handles on every fcurve."""
+        for fc in action.fcurves:
+            for kp in fc.keyframe_points:
+                kp.interpolation      = 'BEZIER'
+                kp.handle_left_type  = 'AUTO_CLAMPED'
+                kp.handle_right_type = 'AUTO_CLAMPED'
+
+    # ── IDLE ─────────────────────────────────────────────────────────────
+    idle_action = get_action("Idle")
+    arm_obj.animation_data_create()
+    arm_obj.animation_data.action = idle_action
+
+    bones = ["Leg_L", "Leg_R", "Arm_L", "Arm_R", "Head", "Root"]
+    bpy.context.scene.frame_set(1)
+    for b in bones:
+        set_bone_rx(1, b, 0.0)
+
+    idle_action.frame_range = (1, 1)
+
+    # ── WALK ─────────────────────────────────────────────────────────────
+    # 4-keyframe walk with BEZIER interpolation so Three.js sees smooth motion.
+    # Swing angle ~50° gives clearly visible steps without looking like a robot.
+    walk_action = get_action("Walk")
+    arm_obj.animation_data.action = walk_action
+
+    SWING = 0.87   # radians ≈ 50°
+
+    # frame → {bone: rotation_x}
+    keyframes = {
+        1:  {"Leg_L":  0.0,    "Leg_R":  0.0,    "Arm_L":  0.0,    "Arm_R":  0.0},
+        11: {"Leg_L":  SWING,  "Leg_R": -SWING,  "Arm_L": -SWING,  "Arm_R":  SWING},
+        21: {"Leg_L":  0.0,    "Leg_R":  0.0,    "Arm_L":  0.0,    "Arm_R":  0.0},
+        31: {"Leg_L": -SWING,  "Leg_R":  SWING,  "Arm_L":  SWING,  "Arm_R": -SWING},
+        40: {"Leg_L":  0.0,    "Leg_R":  0.0,    "Arm_L":  0.0,    "Arm_R":  0.0},
+    }
+
+    for frame, poses in keyframes.items():
+        bpy.context.scene.frame_set(frame)
+        for bone_name, angle in poses.items():
+            set_bone_rx(frame, bone_name, angle)
+
+    walk_action.frame_range = (1, 40)
 
     bpy.context.scene.frame_start = 1
-    bpy.context.scene.frame_end = 40
+    bpy.context.scene.frame_end   = 40
+
     bpy.ops.object.mode_set(mode='OBJECT')
 
+    # ── Push both actions to NLA so FBX exporter bakes them ──────────────
+    arm_obj.animation_data_create()
+
+    # Clear existing NLA tracks to avoid duplicates on re-run
+    for track in list(arm_obj.animation_data.nla_tracks):
+        arm_obj.animation_data.nla_tracks.remove(track)
+
+    for action in [idle_action, walk_action]:
+        track       = arm_obj.animation_data.nla_tracks.new()
+        track.name  = action.name
+        strip       = track.strips.new(action.name,
+                                       int(action.frame_range[0]),
+                                       action)
+        strip.action_frame_start = action.frame_range[0]
+        strip.action_frame_end   = action.frame_range[1]
+
+
+# ---------------------------------------------------------------------------
+# Main builder
+# ---------------------------------------------------------------------------
+
+def build_character(char_name: str,
+                    size_mult: float,
+                    head_col:  tuple,
+                    body_col:  tuple,
+                    arm_col:   tuple,
+                    leg_col:   tuple,
+                    export_path: str):
+
+    clear_scene()
+
+    total_height = 2.0 * size_mult
+    w  = 1.6 * size_mult
+    h  = total_height / 10.0
+    ws = w / 10.0
+    d  = ws * 1.5   # depth (thin flat look)
+
+    # ── 1. Armature first ────────────────────────────────────────────────
+    arm_obj = create_armature(char_name, h, ws)
+
+    # ── 2. Mesh parts ────────────────────────────────────────────────────
+    mh = make_material(char_name + "_Head",  head_col)
+    mb = make_material(char_name + "_Body",  body_col)
+    ma = make_material(char_name + "_Arm",   arm_col)
+    ml = make_material(char_name + "_Leg",   leg_col)
+
+    parts = [
+        # (mesh_name,           location,              size,              material, bone)
+        (char_name+"_Head",   (0,        0, 9*h),   (3.6*ws, d, 2*h),   mh, "Head"),
+        (char_name+"_Body",   (0,        0, 6*h),   (3.6*ws, d, 4*h),   mb, "Root"),
+        (char_name+"_Arm_L",  (-2.6*ws, 0, 6*h),   (1.2*ws, d, 3.5*h), ma, "Arm_L"),
+        (char_name+"_Arm_R",  ( 2.6*ws, 0, 6*h),   (1.2*ws, d, 3.5*h), ma, "Arm_R"),
+        (char_name+"_Leg_L",  (-1.0*ws, 0, 2*h),   (1.2*ws, d, 4*h),   ml, "Leg_L"),
+        (char_name+"_Leg_R",  ( 1.0*ws, 0, 2*h),   (1.2*ws, d, 4*h),   ml, "Leg_R"),
+    ]
+
+    mesh_objects = []
+    for mesh_name, loc, size, mat, bone in parts:
+        obj = make_box(mesh_name, loc, size, mat)
+        parent_mesh_to_bone(obj, arm_obj, bone)
+        mesh_objects.append(obj)
+
+    # ── 3. Bake animations ───────────────────────────────────────────────
+    bake_animations(arm_obj, h, ws)
+
+    # ── 4. Export FBX ────────────────────────────────────────────────────
+    # Select everything
+    bpy.ops.object.select_all(action='SELECT')
+
     bpy.ops.export_scene.fbx(
-        filepath=export_path, 
-        use_selection=False, 
-        bake_anim=True, 
-        bake_anim_use_nla_strips=False, 
-        bake_anim_use_all_actions=True, 
-        add_leaf_bones=False
+        filepath               = export_path,
+        use_selection          = False,
+        object_types           = {'ARMATURE', 'MESH'},
+        # Axis — Blender Z-up → Three.js Y-up conversion handled by FBX flags
+        axis_forward           = '-Z',
+        axis_up                = 'Y',
+        bake_anim              = True,
+        bake_anim_use_all_actions = True,
+        bake_anim_step         = 1,          # every frame baked → no missing in-betweens
+        bake_anim_simplify_factor = 0.0,     # no curve simplification
+        add_leaf_bones         = False,
+        mesh_smooth_type       = 'FACE',
+        use_mesh_modifiers     = True,       # apply Armature modifier on export
     )
 
+    print(f"[MegaZoida] Exported: {export_path}")
+
+
+# ---------------------------------------------------------------------------
+# Generate all four characters
+# ---------------------------------------------------------------------------
+
 p = r"c:\Users\chapa\Desktop\MegaZoida\public\assets\models\\"
-build_pixel_character("Knight", 20.0, (0.6,0.6,0.6,1), (0.1,0.3,0.8,1), (0.4,0.4,0.4,1), (0.3,0.3,0.3,1), p+"Hero_Knight.fbx")
-build_pixel_character("Archer", 20.0, (0.8,0.6,0.2,1), (0.2,0.6,0.2,1), (0.6,0.3,0.1,1), (0.3,0.2,0.1,1), p+"Hero_Archer.fbx")
-build_pixel_character("Human", 20.0, (0.9,0.7,0.5,1), (0.8,0.2,0.2,1), (0.9,0.7,0.5,1), (0.2,0.3,0.8,1), p+"Hero_Human.fbx")
+
+build_character(
+    "Skeleton", 15.0,
+    (0.8, 0.8, 0.8, 1), (0.7, 0.7, 0.7, 1),
+    (0.8, 0.8, 0.8, 1), (0.6, 0.6, 0.6, 1),
+    p + "Enemy_Skeleton.fbx"
+)
+build_character(
+    "Knight", 20.0,
+    (0.6, 0.6, 0.6, 1), (0.1, 0.3, 0.8, 1),
+    (0.4, 0.4, 0.4, 1), (0.3, 0.3, 0.3, 1),
+    p + "Hero_Knight.fbx"
+)
+build_character(
+    "Archer", 20.0,
+    (0.8, 0.6, 0.2, 1), (0.2, 0.6, 0.2, 1),
+    (0.6, 0.3, 0.1, 1), (0.3, 0.2, 0.1, 1),
+    p + "Hero_Archer.fbx"
+)
+build_character(
+    "Human", 20.0,
+    (0.9, 0.7, 0.5, 1), (0.8, 0.2, 0.2, 1),
+    (0.9, 0.7, 0.5, 1), (0.2, 0.3, 0.8, 1),
+    p + "Hero_Human.fbx"
+)

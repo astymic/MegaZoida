@@ -2,8 +2,7 @@ import * as THREE from 'three';
 import { Player } from './Player';
 import { AssetManager } from './AssetManager';
 
-// Tune so skeleton feet match ground speed
-const WALK_CYCLE_DISTANCE = 200;
+const STRIDE_LENGTH = 80; // world units per full walk cycle — same as Player
 
 export class Enemy {
     public x: number;
@@ -19,7 +18,6 @@ export class Enemy {
     public isBoss: boolean;
     public color: string = '#e74c3c';
 
-    // 3D Rendering
     public mesh: THREE.Mesh;
     public hpGroup: THREE.Group;
     public hpBar: THREE.Mesh;
@@ -28,6 +26,7 @@ export class Enemy {
     private mixer?: THREE.AnimationMixer;
     private actionWalk?: THREE.AnimationAction;
     private actionIdle?: THREE.AnimationAction;
+    private walkClipDuration: number = 40 / 24;
     private walkWeight: number = 0;
 
     constructor(
@@ -64,11 +63,7 @@ export class Enemy {
 
         this.hp = this.maxHp;
 
-        const geometry = new THREE.BoxGeometry(
-            this.radius * 2,
-            this.radius * 2,
-            this.radius * 2
-        );
+        const geometry = new THREE.BoxGeometry(this.radius * 2, this.radius * 2, this.radius * 2);
         const material = new THREE.MeshStandardMaterial({ color: matColor });
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.position.set(this.x, this.radius, this.y);
@@ -76,25 +71,24 @@ export class Enemy {
         this.mesh.receiveShadow = true;
         this.scene.add(this.mesh);
 
-        // Attach skeleton model
-        const { model, mixer, actionWalk, actionIdle } = AssetManager.getModel('skeleton');
+        const { model, mixer, actionWalk, actionIdle, walkClipDuration } = AssetManager.getModel('skeleton');
         model.position.set(0, -this.radius, 0);
 
         if (this.isBoss) {
-            const scaleRatio = this.radius / 15.0;
-            model.scale.multiplyScalar(scaleRatio);
+            model.scale.multiplyScalar(this.radius / 15.0);
         }
 
         this.mesh.add(model);
-        material.visible = false; // hide hitbox cube
+        material.visible = false;
 
+        this.walkClipDuration = walkClipDuration;
         if (mixer) {
             this.mixer = mixer;
             this.actionWalk = actionWalk;
             this.actionIdle = actionIdle;
         }
 
-        // Health Bar
+        // HP bar
         this.hpGroup = new THREE.Group();
         this.scene.add(this.hpGroup);
 
@@ -121,7 +115,6 @@ export class Enemy {
         const touchDist = player.radius + this.radius;
 
         let isWalking = false;
-
         if (dist > touchDist) {
             this.x += (dx / dist) * this.speed * dt;
             this.y += (dy / dist) * this.speed * dt;
@@ -130,36 +123,24 @@ export class Enemy {
 
         this.mesh.position.set(this.x, this.radius, this.y);
 
-        // --- Animation (same fix as Player) ---
-        if (this.mixer) {
-            this.mixer.update(dt);
-        }
+        if (this.mixer) this.mixer.update(dt);
 
         if (this.actionWalk && this.actionIdle) {
             const targetWeight = isWalking ? 1 : 0;
             this.walkWeight += (targetWeight - this.walkWeight) * Math.min(1, dt * 10);
-
             this.actionWalk.setEffectiveWeight(this.walkWeight);
             this.actionIdle.setEffectiveWeight(1 - this.walkWeight);
 
-            if (isWalking) {
-                this.actionWalk.timeScale = this.speed / WALK_CYCLE_DISTANCE;
-            }
+            // Same formula as Player — feet locked to ground speed
+            this.actionWalk.timeScale =
+                (this.speed / STRIDE_LENGTH) * this.walkClipDuration;
         }
 
-        // Face the player
-        if (dist > 0) {
-            this.mesh.rotation.y = Math.atan2(dx, dy);
-        }
+        if (dist > 0) this.mesh.rotation.y = Math.atan2(dx, dy);
 
-        // HP bar
         if (this.hp < this.maxHp && this.hp > 0) {
             this.hpGroup.visible = true;
-            this.hpGroup.position.set(
-                this.x,
-                this.mesh.position.y + this.radius + 10,
-                this.y
-            );
+            this.hpGroup.position.set(this.x, this.mesh.position.y + this.radius + 10, this.y);
             this.hpGroup.rotation.x = -Math.PI / 4;
             this.hpBar.scale.x = Math.max(0, this.hp / this.maxHp);
         } else {

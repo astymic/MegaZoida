@@ -215,6 +215,10 @@ def build_advanced_skeleton(char_name, size_mult, export_path):
     bpy.ops.object.join()
     body.name = char_name
 
+    # FIX: Set the mesh origin strictly to (0,0,0) before skinning!
+    bpy.context.scene.cursor.location = (0.0, 0.0, 0.0)
+    bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+
     # ==========================================
     # 5. RIGGING & ANIMATION
     # ==========================================

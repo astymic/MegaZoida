@@ -5,16 +5,19 @@ import { AssetManager } from './AssetManager';
 
 export type HeroType = 'human' | 'knight' | 'archer';
 
-// How many world-units the character travels per full walk cycle.
-// Tune this single constant if the animation still looks off after the fix.
-const WALK_CYCLE_DISTANCE = 28;
+// How many world-units the character's feet travel in one full walk cycle.
+// Derived from the model: leg length ≈ radius*2, stride ≈ leg_length * 1.5
+// This matches the Blender script where legs swing ±0.87 rad over 20 frames.
+// Formula: stride = 2 * leg_length * sin(swing_angle) ≈ 2 * 40 * sin(0.87) ≈ 62
+// But because the camera is top-down and we want visual match, empirical ≈ 80.
+// Change this ONE value if feet still slide: increase = slower leg animation.
+const STRIDE_LENGTH = 80; // world units per full walk cycle
 
 export class Player {
     public x: number;
     public y: number;
     public radius: number = 20;
 
-    // Base Stats
     public maxHp: number = 100;
     public hp: number = 100;
     public maxMana: number = 50;
@@ -24,7 +27,6 @@ export class Player {
     public xpToNextLevel: number = 10;
     public coins: number = 0;
 
-    // Run Stats
     public enemiesKilled: number = 0;
     public coinsEarned: number = 0;
 
@@ -43,7 +45,6 @@ export class Player {
     public facingAngle: number = 0;
     public iFrameTimer: number = 0;
 
-    // 3D Rendering
     public mesh: THREE.Mesh;
     private directionIndicator: THREE.Mesh;
     private scene: THREE.Scene;
@@ -51,8 +52,7 @@ export class Player {
     private mixer?: THREE.AnimationMixer;
     private actionWalk?: THREE.AnimationAction;
     private actionIdle?: THREE.AnimationAction;
-
-    // Smooth weight transition for blend
+    private walkClipDuration: number = 40 / 24;
     private walkWeight: number = 0;
 
     constructor(scene: THREE.Scene, x: number, y: number, type: HeroType = 'human') {
@@ -62,19 +62,12 @@ export class Player {
         this.heroType = type;
 
         if (type === 'knight') {
-            this.maxHp = 150;
-            this.hp = 150;
-            this.defense = 5;
-            this.attackDamage = 15;
-            this.moveSpeed = 160;
-            this.attackSpeed = 0.8;
-            this.radius = 22;
+            this.maxHp = 150; this.hp = 150;
+            this.defense = 5; this.attackDamage = 15;
+            this.moveSpeed = 160; this.attackSpeed = 0.8; this.radius = 22;
         } else if (type === 'archer') {
-            this.maxHp = 80;
-            this.hp = 80;
-            this.moveSpeed = 240;
-            this.attackSpeed = 1.3;
-            this.radius = 18;
+            this.maxHp = 80; this.hp = 80;
+            this.moveSpeed = 240; this.attackSpeed = 1.3; this.radius = 18;
         } else {
             this.radius = 19;
         }
@@ -87,19 +80,18 @@ export class Player {
         this.mesh.receiveShadow = true;
         this.scene.add(this.mesh);
 
-        // Direction indicator nose
         const dirGeo = new THREE.BoxGeometry(8, 8, 20);
         const dirMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
         this.directionIndicator = new THREE.Mesh(dirGeo, dirMat);
         this.directionIndicator.position.set(0, 0, this.radius);
         this.mesh.add(this.directionIndicator);
 
-        // Hide placeholder geometry — model drives the visuals
         material.visible = false;
         this.directionIndicator.visible = false;
 
         const heroData = AssetManager.getModel(this.heroType);
         heroData.model.position.y = -this.radius;
+        this.walkClipDuration = heroData.walkClipDuration;
 
         if (heroData.mixer) {
             this.mixer = heroData.mixer;
@@ -118,7 +110,6 @@ export class Player {
         addProjectile: (p: any) => void,
         scene: THREE.Scene
     ) {
-        // Invincibility frames flash
         const mat = this.mesh.material as THREE.MeshStandardMaterial;
         if (this.iFrameTimer > 0) {
             this.iFrameTimer -= dt;
@@ -128,7 +119,6 @@ export class Player {
             mat.opacity = 1.0;
         }
 
-        // Movement
         const isMoving = moveVector.x !== 0 || moveVector.y !== 0;
         this.x += moveVector.x * this.moveSpeed * dt;
         this.y += moveVector.y * this.moveSpeed * dt;
@@ -137,33 +127,28 @@ export class Player {
             this.facingAngle = Math.atan2(moveVector.y, moveVector.x);
         }
 
-        // Sync 3D mesh
         this.mesh.position.set(this.x, this.radius, this.y);
         this.mesh.rotation.y = -this.facingAngle + Math.PI / 2;
 
-        // --- Animation ---
-        if (this.mixer) {
-            this.mixer.update(dt);
-        }
+        if (this.mixer) this.mixer.update(dt);
 
         if (this.actionWalk && this.actionIdle) {
-            // Smooth blend instead of hard snap
+            // Smooth blend (0.1 s ramp)
             const targetWeight = isMoving ? 1 : 0;
             this.walkWeight += (targetWeight - this.walkWeight) * Math.min(1, dt * 10);
-
             this.actionWalk.setEffectiveWeight(this.walkWeight);
             this.actionIdle.setEffectiveWeight(1 - this.walkWeight);
 
-            // Scale walk animation speed to actual movement speed so feet don't slide.
-            // timeScale = (moveSpeed / WALK_CYCLE_DISTANCE) means one full cycle
-            // covers exactly WALK_CYCLE_DISTANCE world units.
-            if (isMoving) {
-                const desiredTimeScale = this.moveSpeed / WALK_CYCLE_DISTANCE;
-                this.actionWalk.timeScale = desiredTimeScale;
-            }
+            // EXACT timeScale so one animation cycle covers exactly STRIDE_LENGTH units:
+            //   cycles/second = moveSpeed / STRIDE_LENGTH
+            //   timeScale     = cycles/second * clipDuration
+            //                 = (moveSpeed / STRIDE_LENGTH) * walkClipDuration
+            // This means the animation plays faster when the character moves faster,
+            // and the feet stay locked to the ground.
+            this.actionWalk.timeScale =
+                (this.moveSpeed / STRIDE_LENGTH) * this.walkClipDuration;
         }
 
-        // Weapons
         if (this.weapons.length > 0) {
             for (const w of this.weapons) {
                 w.tryAttack(dt, timeSeconds, this, enemies, addProjectile, scene);
