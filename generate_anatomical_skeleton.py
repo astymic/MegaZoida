@@ -1,38 +1,52 @@
+"""
+MegaZoida — Detailed Anatomical Skeleton Generator
+======================================================
+Generates a fully rigged skeleton with:
+  - Skull + jaw
+  - Spine (5 vertebrae segments)
+  - Ribcage (10 pairs of ribs + sternum)
+  - Pelvis
+  - Upper/lower arms + hands with 3 fingers
+  - Upper/lower legs + feet
+  - Full walk animation (BEZIER, 40 frames)
+  - Idle animation (1 frame)
+
+Run inside Blender via: Text Editor → Run Script
+"""
+
 import bpy
 import bmesh
 import math
-import os
+from mathutils import Vector, Matrix, Euler
 
-# ---------------------------------------------------------------------------
-# Setup and Utilities
-# ---------------------------------------------------------------------------
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scene helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
 def clear_scene():
-    if bpy.context.active_object and bpy.context.active_object.mode != 'OBJECT':
-        bpy.ops.object.mode_set(mode='OBJECT')
-    bpy.ops.object.select_all(action='SELECT')
-    bpy.ops.object.delete()
-    for col in bpy.data.collections:
-        if col.name != "Collection":
-            bpy.data.collections.remove(col)
-    for mesh in bpy.data.meshes:
-        bpy.data.meshes.remove(mesh)
-    for arm in bpy.data.armatures:
-        bpy.data.armatures.remove(arm)
-    for mat in bpy.data.materials:
-        bpy.data.materials.remove(mat)
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.context.scene.unit_settings.scale_length = 1.0
 
-def make_material(name: str, color: tuple) -> bpy.types.Material:
-    mat = bpy.data.materials.new(name=name)
+
+def new_material(name: str, color: tuple, metallic=0.0, roughness=0.9) -> bpy.types.Material:
+    mat = bpy.data.materials.new(name)
     mat.use_nodes = True
-    bsdf = mat.node_tree.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = color
-    bsdf.inputs["Roughness"].default_value = 0.9
-    if "Specular IOR Level" in bsdf.inputs:
-        bsdf.inputs["Specular IOR Level"].default_value = 0.5
-    elif "Specular" in bsdf.inputs:
-        bsdf.inputs["Specular"].default_value = 0.5
+    b = mat.node_tree.nodes["Principled BSDF"]
+    b.inputs["Base Color"].default_value  = color
+    b.inputs["Metallic"].default_value    = metallic
+    b.inputs["Roughness"].default_value   = roughness
+    if "Specular IOR Level" in b.inputs:
+        b.inputs["Specular IOR Level"].default_value = 0.15
+    elif "Specular" in b.inputs:
+        b.inputs["Specular"].default_value = 0.15
     return mat
+
+
+def link(obj):
+    bpy.context.collection.objects.link(obj)
+    return obj
+
 
 def apply_transforms(obj):
     bpy.context.view_layer.objects.active = obj
@@ -40,292 +54,602 @@ def apply_transforms(obj):
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     obj.select_set(False)
 
-def make_box(name: str, loc: tuple, size: tuple, mat) -> bpy.types.Object:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Primitive mesh builders  (all return bpy.types.Object)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def make_box(name, loc, size, mat, rot=(0,0,0)):
     mesh = bpy.data.meshes.new(name)
-    obj = bpy.data.objects.new(name, mesh)
-    bpy.context.collection.objects.link(obj)
-    bm = bmesh.new()
+    obj  = link(bpy.data.objects.new(name, mesh))
+    bm   = bmesh.new()
     bmesh.ops.create_cube(bm, size=1.0)
     bmesh.ops.scale(bm, vec=size, verts=bm.verts)
-    bm.to_mesh(mesh)
-    bm.free()
+    bm.to_mesh(mesh); bm.free()
     mesh.materials.append(mat)
     obj.location = loc
+    obj.rotation_euler = rot
     apply_transforms(obj)
     return obj
 
-def make_cylinder(name: str, loc: tuple, radius: float, depth: float, rot: tuple, mat) -> bpy.types.Object:
+
+def make_sphere(name, loc, radius, mat, segments=8):
     mesh = bpy.data.meshes.new(name)
-    obj = bpy.data.objects.new(name, mesh)
-    bpy.context.collection.objects.link(obj)
-    bm = bmesh.new()
-    bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=12, radius1=radius, radius2=radius, depth=depth)
-    # The cone comes aligned on Z axis. Rotate it appropriately using euler
-    bmesh.ops.rotate(bm, verts=bm.verts, cent=(0,0,0), matrix=mathutils.Euler(rot, 'XYZ').to_matrix())
-    bm.to_mesh(mesh)
-    bm.free()
+    obj  = link(bpy.data.objects.new(name, mesh))
+    bm   = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=segments, v_segments=segments//2, radius=radius)
+    bm.to_mesh(mesh); bm.free()
     mesh.materials.append(mat)
     obj.location = loc
     apply_transforms(obj)
     return obj
 
-def make_sphere(name: str, loc: tuple, radius: tuple, mat) -> bpy.types.Object:
+
+def make_cylinder(name, loc, radius, depth, mat, rot=(0,0,0), segments=8):
     mesh = bpy.data.meshes.new(name)
-    obj = bpy.data.objects.new(name, mesh)
-    bpy.context.collection.objects.link(obj)
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=8, radius=1.0)
-    bmesh.ops.scale(bm, vec=radius, verts=bm.verts)
-    bm.to_mesh(mesh)
-    bm.free()
+    obj  = link(bpy.data.objects.new(name, mesh))
+    bm   = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False,
+                          segments=segments, radius1=radius, radius2=radius, depth=depth)
+    bm.to_mesh(mesh); bm.free()
     mesh.materials.append(mat)
     obj.location = loc
+    obj.rotation_euler = rot
     apply_transforms(obj)
     return obj
 
-import mathutils
 
-# ---------------------------------------------------------------------------
-# Armature & Rigging
-# ---------------------------------------------------------------------------
+def make_cone(name, loc, r1, r2, depth, mat, rot=(0,0,0)):
+    """Tapered cylinder — used for ribs and limb bones."""
+    mesh = bpy.data.meshes.new(name)
+    obj  = link(bpy.data.objects.new(name, mesh))
+    bm   = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False,
+                          segments=8, radius1=r1, radius2=r2, depth=depth)
+    bm.to_mesh(mesh); bm.free()
+    mesh.materials.append(mat)
+    obj.location = loc
+    obj.rotation_euler = rot
+    apply_transforms(obj)
+    return obj
 
-def create_armature(char_name: str, h: float, ws: float) -> bpy.types.Object:
-    bpy.context.scene.cursor.location = (0.0, 0.0, 0.0)
-    bpy.ops.object.armature_add(enter_editmode=True, align='WORLD', location=(0, 0, 0))
-    arm_obj = bpy.context.active_object
-    arm_obj.name = char_name + "_Rig"
-    amt = arm_obj.data
-    amt.name = char_name + "_Armature"
-    
-    Bone = amt.edit_bones[0]
-    Bone.name = "Root"
-    Bone.head = (0, 0, 5*h)
-    Bone.tail = (0, 0, 8*h)
 
-    def add_bone(name, head, tail, parent_name=None):
-        b = amt.edit_bones.new(name)
-        b.head = head
-        b.tail = tail
-        if parent_name:
-            b.parent = amt.edit_bones[parent_name]
-        return b
+# ─────────────────────────────────────────────────────────────────────────────
+# Armature
+# ─────────────────────────────────────────────────────────────────────────────
 
-    add_bone("Head",  (0, 0, 8*h), (0, 0, 10*h), "Root")
-    add_bone("Arm_L", (-1.5*ws, 0, 7.5*h), (-3.5*ws, 0, 4.0*h), "Root")
-    add_bone("Arm_R", ( 1.5*ws, 0, 7.5*h), ( 3.5*ws, 0, 4.0*h), "Root")
-    add_bone("Leg_L", (-0.8*ws, 0, 5*h), (-0.8*ws, 0, 0), "Root")
-    add_bone("Leg_R", ( 0.8*ws, 0, 5*h), ( 0.8*ws, 0, 0), "Root")
-    
+def create_armature(name: str) -> bpy.types.Object:
+    arm_data = bpy.data.armatures.new(name + "_Armature")
+    arm_obj  = link(bpy.data.objects.new(name + "_Rig", arm_data))
+    bpy.context.view_layer.objects.active = arm_obj
+    arm_obj.select_set(True)
+    bpy.ops.object.mode_set(mode='EDIT')
+    return arm_obj
+
+
+def add_bone(armature_obj, name, head, tail, parent_name=None):
+    arm = armature_obj.data
+    b      = arm.edit_bones.new(name)
+    b.head = head
+    b.tail = tail
+    if parent_name and parent_name in arm.edit_bones:
+        b.parent = arm.edit_bones[parent_name]
+    return b
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Skinning helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def skin(mesh_obj, armature_obj, bone_name):
+    """Attach mesh_obj rigidly to bone_name on armature_obj."""
+    mod         = mesh_obj.modifiers.new("Armature", 'ARMATURE')
+    mod.object  = armature_obj
+    mesh_obj.parent      = armature_obj
+    mesh_obj.parent_type = 'OBJECT'
+    vg = mesh_obj.vertex_groups.new(name=bone_name)
+    vg.add([v.index for v in mesh_obj.data.vertices], 1.0, 'REPLACE')
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Skeleton geometry  (S = scale multiplier, default 1.0 = ~1.8 m tall)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_skeleton(S: float, mat_bone: bpy.types.Material, mat_dark: bpy.types.Material, mat_glow: bpy.types.Material):
+    """
+    Returns dict of mesh objects keyed by bone name.
+    Coordinate system: Z = up, origin at feet.
+    Heights (S=1):
+      feet   0.00
+      ankle  0.08
+      knee   0.48
+      hip    0.92
+      navel  1.02
+      chest  1.20
+      shoulder 1.42
+      neck   1.52
+      head_bot 1.56
+      head_top 1.80
+    """
+
+    meshes = {}   # bone_name → list of mesh objects
+
+    def add(bone, obj):
+        meshes.setdefault(bone, []).append(obj)
+
+    # ── SKULL ──────────────────────────────────────────────────────────────
+    # Braincase — flattened sphere
+    skull = make_sphere("Skull_brain", (0, 0, S*1.695), S*0.115, mat_bone, segments=12)
+    skull.scale = (1.0, 0.85, 1.05)
+    apply_transforms(skull)
+    add("Head", skull)
+
+    # Cheekbones / brow ridge — squashed box
+    brow = make_box("Skull_brow", (0, S*0.06, S*1.665),
+                    (S*0.17, S*0.06, S*0.04), mat_bone)
+    add("Head", brow)
+
+    # Nose bridge
+    nose = make_box("Skull_nose", (0, S*0.085, S*1.62),
+                    (S*0.04, S*0.04, S*0.06), mat_bone)
+    add("Head", nose)
+
+    # Eye sockets (dark holes with glowing red centers)
+    for sx in (-1, 1):
+        eye = make_sphere("Eye_socket", (sx*S*0.05, S*0.085, S*1.65),
+                          S*0.024, mat_glow, segments=12)
+        add("Head", eye)
+
+    # Zygomatic arches
+    for sx in (-1, 1):
+        arch = make_box(f"Cheek_{sx}", (sx*S*0.1, S*0.055, S*1.635),
+                        (S*0.04, S*0.06, S*0.05), mat_bone)
+        add("Head", arch)
+
+    # Jaw
+    jaw = make_box("Jaw", (0, S*0.04, S*1.575),
+                   (S*0.13, S*0.09, S*0.055), mat_bone)
+    add("Head", jaw)
+
+    # Teeth rows (simplified blocks)
+    upper_teeth = make_box("Teeth_upper", (0, S*0.08, S*1.60),
+                           (S*0.11, S*0.015, S*0.02), mat_bone)
+    lower_teeth = make_box("Teeth_lower", (0, S*0.08, S*1.575),
+                           (S*0.10, S*0.015, S*0.018), mat_bone)
+    add("Head", upper_teeth)
+    add("Head", lower_teeth)
+
+    # ── SPINE ──────────────────────────────────────────────────────────────
+    # 5 vertebra discs from neck down to sacrum
+    spine_heights = [S*1.50, S*1.42, S*1.30, S*1.18, S*1.06]
+    spine_radii   = [S*0.028, S*0.032, S*0.036, S*0.038, S*0.040]
+    for i, (zh, r) in enumerate(zip(spine_heights, spine_radii)):
+        bone_name = "Spine" if i < 3 else "Root"
+        v = make_cylinder(f"Vertebra_{i}", (0, 0, zh), r, S*0.055, mat_bone,
+                          rot=(0, math.pi/2, 0))
+        # Spinous process (small nub sticking back)
+        sp = make_box(f"SpinousProc_{i}", (0, -S*0.045, zh),
+                      (S*0.02, S*0.04, S*0.025), mat_bone)
+        add(bone_name, v)
+        add(bone_name, sp)
+
+    # ── RIBCAGE ────────────────────────────────────────────────────────────
+    # Sternum
+    sternum = make_box("Sternum", (0, S*0.06, S*1.28),
+                       (S*0.04, S*0.025, S*0.24), mat_bone)
+    add("Spine", sternum)
+
+    # 10 rib pairs — curved using tapered cones arranged in arc
+    for i in range(10):
+        rib_z     = S * (1.44 - i * 0.025)
+        rib_len   = S * (0.16 - i * 0.006)
+        rib_r_big = S * 0.012
+        rib_r_sml = S * 0.007
+        for sx in (-1, 1):
+            angle = sx * (0.35 + i * 0.02)   # flare out slightly lower
+            lx = sx * rib_len * 0.5
+            cx = sx * rib_len * 0.3
+            rib = make_cone(f"Rib_{i}_{sx}",
+                            (cx, S*0.01, rib_z),
+                            rib_r_big, rib_r_sml, rib_len,
+                            mat_bone,
+                            rot=(angle * 0.3, 0.0, angle))
+            add("Spine", rib)
+
+    # ── CLAVICLES ──────────────────────────────────────────────────────────
+    for sx in (-1, 1):
+        clav = make_cone(f"Clavicle_{sx}",
+                         (sx * S*0.09, S*0.02, S*1.47),
+                         S*0.018, S*0.012, S*0.18,
+                         mat_bone,
+                         rot=(0, 0, sx * math.pi * 0.08))
+        add("Spine", clav)
+
+    # ── PELVIS ─────────────────────────────────────────────────────────────
+    pelvis_body = make_box("Pelvis_body", (0, 0, S*0.96),
+                           (S*0.22, S*0.14, S*0.12), mat_bone)
+    add("Root", pelvis_body)
+
+    # Iliac wings
+    for sx in (-1, 1):
+        wing = make_box(f"Iliac_{sx}", (sx*S*0.13, -S*0.02, S*0.99),
+                        (S*0.06, S*0.10, S*0.14), mat_bone,
+                        rot=(0, 0, sx*0.25))
+        add("Root", wing)
+
+    # Pubic arch
+    pub = make_box("Pubis", (0, S*0.04, S*0.90),
+                   (S*0.12, S*0.05, S*0.05), mat_bone)
+    add("Root", pub)
+
+    # Sacrum
+    sac = make_box("Sacrum", (0, -S*0.04, S*0.95),
+                   (S*0.08, S*0.06, S*0.12), mat_bone)
+    add("Root", sac)
+
+    # ── SCAPULAS ───────────────────────────────────────────────────────────
+    for sx in (-1, 1):
+        scap = make_box(f"Scapula_{sx}", (sx*S*0.14, -S*0.04, S*1.38),
+                        (S*0.10, S*0.02, S*0.10), mat_bone,
+                        rot=(0, sx*0.2, 0))
+        add("Spine", scap)
+
+    # ── UPPER ARMS ─────────────────────────────────────────────────────────
+    for sx in (-1, 1):
+        side   = "L" if sx < 0 else "R"
+        bone_n = f"Arm_{side}"
+        # Humerus shaft
+        hum = make_cone(f"Humerus_{side}",
+                        (sx*S*0.20, 0, S*1.25),
+                        S*0.030, S*0.022, S*0.30,
+                        mat_bone,
+                        rot=(0, 0, sx*math.pi*0.5))
+        # Humeral head (ball at shoulder)
+        hhead = make_sphere(f"Humerus_head_{side}",
+                            (sx*S*0.175, 0, S*1.415),
+                            S*0.038, mat_bone)
+        # Distal condyle (elbow knob)
+        cond = make_sphere(f"Condyle_{side}",
+                           (sx*S*0.225, 0, S*1.095),
+                           S*0.025, mat_bone)
+        add(bone_n, hum)
+        add(bone_n, hhead)
+        add(bone_n, cond)
+
+    # ── FOREARMS ───────────────────────────────────────────────────────────
+    for sx in (-1, 1):
+        side   = "L" if sx < 0 else "R"
+        bone_n = f"ForeArm_{side}"
+        # Radius
+        rad = make_cone(f"Radius_{side}",
+                        (sx*S*0.225, 0, S*0.890),
+                        S*0.020, S*0.014, S*0.28,
+                        mat_bone,
+                        rot=(0, 0, sx*math.pi*0.5))
+        # Ulna (slightly offset)
+        uln = make_cone(f"Ulna_{side}",
+                        (sx*S*0.235, -S*0.015, S*0.890),
+                        S*0.016, S*0.011, S*0.28,
+                        mat_bone,
+                        rot=(0.05, 0, sx*math.pi*0.5))
+        # Olecranon (elbow point)
+        olec = make_box(f"Olecranon_{side}",
+                        (sx*S*0.228, -S*0.028, S*1.07),
+                        (S*0.02, S*0.02, S*0.04), mat_bone)
+        add(bone_n, rad)
+        add(bone_n, uln)
+        add(bone_n, olec)
+
+    # ── HANDS ──────────────────────────────────────────────────────────────
+    for sx in (-1, 1):
+        side   = "L" if sx < 0 else "R"
+        bone_n = f"Hand_{side}"
+        # Carpal block
+        carp = make_box(f"Carpals_{side}",
+                        (sx*S*0.228, 0, S*0.670),
+                        (S*0.065, S*0.035, S*0.055), mat_bone)
+        add(bone_n, carp)
+
+        # 3 metacarpals + 2 phalanges each
+        for fi, fx_off in enumerate((-0.020, 0.0, 0.020)):
+            fx = sx * (S*0.228 + fx_off * S)
+            # Metacarpal
+            mc = make_cone(f"Meta_{side}_{fi}",
+                           (fx, 0, S*0.615),
+                           S*0.010, S*0.007, S*0.060,
+                           mat_bone,
+                           rot=(0, 0, sx*math.pi*0.5 + fx_off*2))
+            # Proximal phalanx
+            pp = make_cone(f"Phal_P_{side}_{fi}",
+                           (fx, 0, S*0.560),
+                           S*0.009, S*0.007, S*0.048,
+                           mat_bone,
+                           rot=(0, 0, sx*math.pi*0.5))
+            # Distal phalanx
+            dp = make_cone(f"Phal_D_{side}_{fi}",
+                           (fx, 0, S*0.516),
+                           S*0.007, S*0.004, S*0.038,
+                           mat_bone,
+                           rot=(0, 0, sx*math.pi*0.5))
+            add(bone_n, mc)
+            add(bone_n, pp)
+            add(bone_n, dp)
+
+    # ── UPPER LEGS ─────────────────────────────────────────────────────────
+    for sx in (-1, 1):
+        side   = "L" if sx < 0 else "R"
+        bone_n = f"Leg_{side}"
+        # Femur shaft
+        fem = make_cone(f"Femur_{side}",
+                        (sx*S*0.095, 0, S*0.680),
+                        S*0.038, S*0.028, S*0.44,
+                        mat_bone,
+                        rot=(0, 0, sx*0.12))
+        # Femoral head
+        fhead = make_sphere(f"FemHead_{side}",
+                            (sx*S*0.090, 0, S*0.895),
+                            S*0.040, mat_bone)
+        # Greater trochanter
+        tro = make_box(f"Trochanter_{side}",
+                       (sx*S*0.125, 0, S*0.875),
+                       (S*0.030, S*0.025, S*0.045), mat_bone)
+        # Lateral condyle (knee knob)
+        kcon = make_sphere(f"KneeCondyle_{side}",
+                           (sx*S*0.095, 0, S*0.470),
+                           S*0.032, mat_bone)
+        add(bone_n, fem)
+        add(bone_n, fhead)
+        add(bone_n, tro)
+        add(bone_n, kcon)
+
+    # ── LOWER LEGS ─────────────────────────────────────────────────────────
+    for sx in (-1, 1):
+        side   = "L" if sx < 0 else "R"
+        bone_n = f"Shin_{side}"
+        # Tibia
+        tib = make_cone(f"Tibia_{side}",
+                        (sx*S*0.093, 0, S*0.275),
+                        S*0.030, S*0.018, S*0.40,
+                        mat_bone,
+                        rot=(0, 0, sx*0.06))
+        # Fibula (thin, lateral)
+        fib = make_cone(f"Fibula_{side}",
+                        (sx*S*0.108, -S*0.010, S*0.275),
+                        S*0.013, S*0.009, S*0.38,
+                        mat_bone,
+                        rot=(0.04, 0, sx*0.07))
+        # Patella
+        pat = make_sphere(f"Patella_{side}",
+                          (sx*S*0.093, S*0.025, S*0.464),
+                          S*0.022, mat_bone)
+        # Medial malleolus (ankle knob)
+        mal = make_sphere(f"Malleolus_{side}",
+                          (sx*S*0.088, 0, S*0.082),
+                          S*0.018, mat_bone)
+        add(bone_n, tib)
+        add(bone_n, fib)
+        add(bone_n, pat)
+        add(bone_n, mal)
+
+    # ── FEET ───────────────────────────────────────────────────────────────
+    for sx in (-1, 1):
+        side   = "L" if sx < 0 else "R"
+        bone_n = f"Foot_{side}"
+        # Calcaneus (heel)
+        calc = make_box(f"Heel_{side}",
+                        (sx*S*0.093, -S*0.035, S*0.035),
+                        (S*0.055, S*0.080, S*0.045), mat_bone)
+        # Talus
+        tal = make_box(f"Talus_{side}",
+                       (sx*S*0.093, S*0.010, S*0.050),
+                       (S*0.045, S*0.055, S*0.035), mat_bone)
+        # Metatarsals (3 toes)
+        for ti, tz_off in enumerate((-0.015, 0.0, 0.015)):
+            tx = sx * S * (0.093 + tz_off)
+            mt = make_cone(f"Meta_foot_{side}_{ti}",
+                           (tx, S*0.060, S*0.030),
+                           S*0.011, S*0.007, S*0.080,
+                           mat_bone,
+                           rot=(math.pi*0.5, 0, sx*tz_off*3))
+            tp = make_cone(f"Toe_{side}_{ti}",
+                           (tx, S*0.105, S*0.028),
+                           S*0.009, S*0.005, S*0.040,
+                           mat_bone,
+                           rot=(math.pi*0.5, 0, 0))
+            add(bone_n, mt)
+            add(bone_n, tp)
+        add(bone_n, calc)
+        add(bone_n, tal)
+
+    return meshes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rig builder — matches bone names used in geometry dict above
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_rig(name: str, S: float) -> bpy.types.Object:
+    arm_obj = create_armature(name)
+    arm     = arm_obj.data
+
+    def B(n, h, t, p=None): add_bone(arm_obj, n, h, t, p)
+
+    # Root / Pelvis
+    B("Root",       (0, 0, S*0.92),  (0, 0, S*1.02))
+    # Spine chain
+    B("Spine",      (0, 0, S*1.02),  (0, 0, S*1.44),  "Root")
+    # Head / neck
+    B("Head",       (0, 0, S*1.52),  (0, 0, S*1.80),  "Spine")
+    # Arms
+    for sx, side in ((-1,"L"),(1,"R")):
+        B(f"Arm_{side}",      (sx*S*0.17, 0, S*1.42),  (sx*S*0.23, 0, S*1.09),  "Spine")
+        B(f"ForeArm_{side}",  (sx*S*0.23, 0, S*1.09),  (sx*S*0.23, 0, S*0.73),  f"Arm_{side}")
+        B(f"Hand_{side}",     (sx*S*0.23, 0, S*0.73),  (sx*S*0.23, 0, S*0.50),  f"ForeArm_{side}")
+    # Legs
+    for sx, side in ((-1,"L"),(1,"R")):
+        B(f"Leg_{side}",   (sx*S*0.09, 0, S*0.92),  (sx*S*0.09, 0, S*0.47),  "Root")
+        B(f"Shin_{side}",  (sx*S*0.09, 0, S*0.47),  (sx*S*0.09, 0, S*0.08),  f"Leg_{side}")
+        B(f"Foot_{side}",  (sx*S*0.09, 0, S*0.08),  (sx*S*0.09, S*0.09, 0),  f"Shin_{side}")
+
     bpy.ops.object.mode_set(mode='OBJECT')
     return arm_obj
 
-def parent_mesh_to_bone(mesh_obj: bpy.types.Object, armature_obj: bpy.types.Object, bone_name: str):
-    mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
-    mod.object = armature_obj
-    mesh_obj.parent = armature_obj
-    mesh_obj.parent_type = 'OBJECT'
-    vg = mesh_obj.vertex_groups.new(name=bone_name)
-    vg.add(list(range(len(mesh_obj.data.vertices))), 1.0, 'REPLACE')
 
-def set_bone_rx(frame, bone_name, angle):
-    arm_obj = bpy.context.active_object
-    pbone = arm_obj.pose.bones[bone_name]
-    pbone.rotation_mode = 'XYZ'
-    pbone.rotation_euler[0] = angle
-    pbone.keyframe_insert(data_path="rotation_euler", index=0, frame=frame)
+# ─────────────────────────────────────────────────────────────────────────────
+# Animation
+# ─────────────────────────────────────────────────────────────────────────────
 
-def set_bone_locZ(frame, bone_name, dz):
-    arm_obj = bpy.context.active_object
-    pbone = arm_obj.pose.bones[bone_name]
-    pbone.location[2] = dz
-    pbone.keyframe_insert(data_path="location", index=2, frame=frame)
-
-def bake_animations(arm_obj: bpy.types.Object, h: float, ws: float):
+def bake_animations(arm_obj: bpy.types.Object):
     bpy.context.view_layer.objects.active = arm_obj
+    arm_obj.select_set(True)
     bpy.ops.object.mode_set(mode='POSE')
-    
-    # ── IDLE ──
-    idle_action = bpy.data.actions.new(name="Idle")
-    arm_obj.animation_data_create()
-    arm_obj.animation_data.action = idle_action
 
-    bones = ["Leg_L", "Leg_R", "Arm_L", "Arm_R", "Head", "Root"]
-    bpy.context.scene.frame_set(1)
-    for b in bones:
-        set_bone_rx(1, b, 0.0)
-    # Body bobbing for idle
-    set_bone_locZ(1, "Root", 0.0)
-    set_bone_locZ(20, "Root", -0.2*h)
-    set_bone_locZ(40, "Root", 0.0)
-    idle_action.frame_range = (1, 40)
+    def get_action(n):
+        return bpy.data.actions.get(n) or bpy.data.actions.new(n)
 
-    # ── WALK ──
-    walk_action = bpy.data.actions.new(name="Walk")
-    arm_obj.animation_data.action = walk_action
+    def kf(action, bone, frame, axis, val):
+        arm_obj.animation_data_create()
+        arm_obj.animation_data.action = action
+        pb = arm_obj.pose.bones[bone]
+        pb.rotation_mode = 'XYZ'
+        pb.rotation_euler[axis] = val
+        pb.keyframe_insert("rotation_euler", index=axis, frame=frame)
 
-    SWING = 0.87
-    keyframes = {
-        1:  {"Leg_L":  0.0,    "Leg_R":  0.0,    "Arm_L":  0.0,    "Arm_R":  0.0},
-        11: {"Leg_L":  SWING,  "Leg_R": -SWING,  "Arm_L": -SWING,  "Arm_R":  SWING},
-        21: {"Leg_L":  0.0,    "Leg_R":  0.0,    "Arm_L":  0.0,    "Arm_R":  0.0},
-        31: {"Leg_L": -SWING,  "Leg_R":  SWING,  "Arm_L":  SWING,  "Arm_R": -SWING},
-        40: {"Leg_L":  0.0,    "Leg_R":  0.0,    "Arm_L":  0.0,    "Arm_R":  0.0},
+    def smooth(action):
+        pass
+
+    # ── IDLE ──────────────────────────────────────────────────────────────
+    idle = get_action("Idle")
+    bones_all = ["Root","Spine","Head",
+                 "Arm_L","Arm_R","ForeArm_L","ForeArm_R","Hand_L","Hand_R",
+                 "Leg_L","Leg_R","Shin_L","Shin_R","Foot_L","Foot_R"]
+    for b in bones_all:
+        for ax in range(3):
+            kf(idle, b, 1, ax, 0.0)
+    idle.frame_range = (1, 1)
+
+    # ── WALK ──────────────────────────────────────────────────────────────
+    walk = get_action("Walk")
+    SW   = 0.55   # leg swing  ≈ 31°
+    SA   = 0.40   # arm swing  ≈ 23°
+    SH   = 0.12   # shin bend  at peak stance
+    LEAN = 0.08   # slight forward torso lean when moving
+
+    #  frame: {bone: (axis, value)}
+    def pose(frame, data):
+        arm_obj.animation_data.action = walk
+        for bone, (axis, val) in data.items():
+            kf(walk, bone, frame, axis, val)
+
+    neutral = {
+        "Leg_L":(0,0),"Leg_R":(0,0),
+        "Shin_L":(0,0),"Shin_R":(0,0),
+        "Arm_L":(0,0),"Arm_R":(0,0),
+        "Spine":(0, LEAN),
     }
-    for frame, poses in keyframes.items():
-        bpy.context.scene.frame_set(frame)
-        for bone_name, angle in poses.items():
-            set_bone_rx(frame, bone_name, angle)
-    
-    # Heavy body bobbing on walk to convey weight
-    set_bone_locZ(1, "Root", -0.5*h)
-    set_bone_locZ(11, "Root", 0.4*h)
-    set_bone_locZ(21, "Root", -0.5*h)
-    set_bone_locZ(31, "Root", 0.4*h)
-    set_bone_locZ(40, "Root", -0.5*h)
-    walk_action.frame_range = (1, 40)
+
+    step_right = {   # right foot forward
+        "Leg_L":  (0,  SW),  "Leg_R":  (0, -SW),
+        "Shin_L": (0,  SH),  "Shin_R": (0,  SH),
+        "Arm_L":  (0, -SA),  "Arm_R":  (0,  SA),
+        "Spine":  (0,  LEAN),
+    }
+    step_left = {    # left foot forward
+        "Leg_L":  (0, -SW),  "Leg_R":  (0,  SW),
+        "Shin_L": (0,  SH),  "Shin_R": (0,  SH),
+        "Arm_L":  (0,  SA),  "Arm_R":  (0, -SA),
+        "Spine":  (0,  LEAN),
+    }
+
+    for b, (ax, v) in neutral.items():    kf(walk, b, 1,  ax, v)
+    for b, (ax, v) in step_right.items(): kf(walk, b, 11, ax, v)
+    for b, (ax, v) in neutral.items():    kf(walk, b, 21, ax, v)
+    for b, (ax, v) in step_left.items():  kf(walk, b, 31, ax, v)
+    for b, (ax, v) in neutral.items():    kf(walk, b, 40, ax, v)
+
+    smooth(walk)
+    walk.frame_range = (1, 40)
 
     bpy.context.scene.frame_start = 1
     bpy.context.scene.frame_end   = 40
+
     bpy.ops.object.mode_set(mode='OBJECT')
 
-    # NLA Binding
+    # NLA tracks
     arm_obj.animation_data_create()
-    for track in list(arm_obj.animation_data.nla_tracks):
-        arm_obj.animation_data.nla_tracks.remove(track)
-    for action in [idle_action, walk_action]:
+    for tr in list(arm_obj.animation_data.nla_tracks):
+        arm_obj.animation_data.nla_tracks.remove(tr)
+    for action in [idle, walk]:
         track = arm_obj.animation_data.nla_tracks.new()
         track.name = action.name
         strip = track.strips.new(action.name, int(action.frame_range[0]), action)
-        strip.action_frame_start, strip.action_frame_end = action.frame_range
+        strip.action_frame_start = action.frame_range[0]
+        strip.action_frame_end   = action.frame_range[1]
 
-# ---------------------------------------------------------------------------
-# Anatomy Builder
-# ---------------------------------------------------------------------------
 
-def build_anatomical_skeleton(char_name: str, size_mult: float, export_path: str):
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build(export_path: str, S: float = 20.0):
+    """
+    S = scale in Blender units.  At S=20 the character is 20*1.8 = 36 Blender units tall.
+    After the 0.01 scale fix in AssetManager it becomes ~0.36 Three.js units (36 cm) — matching
+    the existing enemy radius=15 hitbox.  Increase S proportionally if you want bigger characters.
+    """
     clear_scene()
 
-    bone_col = (0.85, 0.82, 0.70, 1) # Realistic brownish bone
-    drk_col  = (0.1, 0.1, 0.1, 1)    # Dark cavities (nose, spine gaps)
+    bone_color = (0.87, 0.82, 0.70, 1.0)
+    dark_color = (0.10, 0.08, 0.07, 1.0)
+
+    mat_bone = new_material("Bone",     bone_color, metallic=0.0, roughness=0.85)
+    mat_dark = new_material("BoneDark", dark_color, metallic=0.0, roughness=0.95)
     
-    # Make them taller! Increase height scalar considerably compared to width scalar
-    total_height = 2.4 * size_mult # Was 2.0
-    h = total_height / 10.0
-    ws = (1.4 * size_mult) / 10.0 # Make them thinner
-    
-    arm_obj = create_armature(char_name, h, ws)
-    
-    mat_bone = make_material(char_name + "_BoneMat", bone_col)
-    mat_dark = make_material(char_name + "_DarkMat", drk_col)
-    
-    # Glowing Red Eyes
-    mat_glow = bpy.data.materials.new(name="RedGlow")
+    mat_glow = bpy.data.materials.new("RedGlow")
     mat_glow.use_nodes = True
-    bsdf = mat_glow.node_tree.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = (1, 0, 0, 1)
-    bsdf.inputs["Emission Color"].default_value = (1, 0, 0, 1)
-    bsdf.inputs["Emission Strength"].default_value = 10.0
-    
-    meshes = []
-    def add(mesh_obj, bone):
-        parent_mesh_to_bone(mesh_obj, arm_obj, bone)
-        meshes.append(mesh_obj)
+    b = mat_glow.node_tree.nodes["Principled BSDF"]
+    b.inputs["Base Color"].default_value = (1, 0, 0, 1)
+    b.inputs["Emission Color"].default_value = (1, 0, 0, 1)
+    b.inputs["Emission Strength"].default_value = 10.0
 
-    # --- 1. SKULL (Facing -Y) ---
-    skull = make_sphere("Skull", (0, 0, 9*h), (1.3*ws, 1.5*ws, 1.4*h), mat_bone)
-    jaw = make_box("Jaw", (0, -0.4*ws, 8.0*h), (0.9*ws, 1.2*ws, 0.8*h), mat_bone) # y is negative
-    eyeL = make_sphere("Eye_L", (-0.4*ws, -1.2*ws, 8.8*h), (0.35*ws, 0.35*ws, 0.35*h), mat_glow)
-    eyeR = make_sphere("Eye_R", ( 0.4*ws, -1.2*ws, 8.8*h), (0.35*ws, 0.35*ws, 0.35*h), mat_glow)
-    nose = make_cylinder("Nose", (0, -1.3*ws, 8.3*h), 0.15*ws, 0.5*h, (math.pi/2,0,0), mat_dark)
-    add(skull, "Head"); add(jaw, "Head"); add(eyeL, "Head"); add(eyeR, "Head"); add(nose, "Head")
+    # 1. Rig
+    arm_obj = build_rig("Skeleton", S)
 
-    # --- 2. SPINE (Segmented) ---
-    for i in range(13):
-        z = 4.5*h + i * (3.5*h / 12)
-        thick = 0.4*ws if i < 9 else 0.25*ws
-        mat = mat_bone if i % 2 == 0 else mat_dark
-        s = make_cylinder(f"Spine_{i}", (0, 0.2*ws, z), thick, 0.2*h, (0,0,0), mat) # Spine pushed slightly back (+Y)
-        add(s, "Root")
+    # 2. Geometry
+    meshes = build_skeleton(S, mat_bone, mat_dark, mat_glow)
 
-    # --- 3. PELVIS ---
-    pelvis_base = make_box("Pelvis_Base", (0, 0, 4.3*h), (1.4*ws, 0.8*ws, 0.8*h), mat_bone)
-    il_L = make_sphere("Ilium_L", (-0.8*ws, -0.1*ws, 4.5*h), (0.9*ws, 0.5*ws, 0.9*h), mat_bone)
-    il_R = make_sphere("Ilium_R", ( 0.8*ws, -0.1*ws, 4.5*h), (0.9*ws, 0.5*ws, 0.9*h), mat_bone)
-    add(pelvis_base, "Root"); add(il_L, "Root"); add(il_R, "Root")
-    
-    # --- 4. RIBCAGE ---
-    clr_L = make_cylinder("Collar_L", (-0.8*ws, -0.1*ws, 7.8*h), 0.2*ws, 1.8*ws, (0, math.pi/2, 0.2), mat_bone)
-    clr_R = make_cylinder("Collar_R", ( 0.8*ws, -0.1*ws, 7.8*h), 0.2*ws, 1.8*ws, (0, math.pi/2, -0.2), mat_bone)
-    sternum = make_box("Sternum", (0, -0.8*ws, 6.5*h), (0.25*ws, 0.15*ws, 1.8*h), mat_bone)
-    add(clr_L, "Root"); add(clr_R, "Root"); add(sternum, "Root")
+    # 3. Skin each mesh group to its bone
+    for bone_name, obj_list in meshes.items():
+        for obj in obj_list:
+            skin(obj, arm_obj, bone_name)
 
-    for i in range(9): # More ribs
-        z = 7.5*h - i * 0.3*h
-        w = 1.3 - abs(i-4)*0.15
-        d = 0.9 + (i*0.03)
-        ribL = make_box(f"Rib_L_{i}", (-w*0.8*ws, -0.4*ws, z), (w*1.5*ws, d*1.2*ws, 0.1*h), mat_bone)
-        ribR = make_box(f"Rib_R_{i}", ( w*0.8*ws, -0.4*ws, z), (w*1.5*ws, d*1.2*ws, 0.1*h), mat_bone)
-        add(ribL, "Root"); add(ribR, "Root")
+    # 4. Animate
+    bake_animations(arm_obj)
 
-    # --- 5. ARMS ---
-    sh_L = make_sphere("ShL", (-1.6*ws, 0, 7.6*h), (0.35*ws, 0.35*ws, 0.35*h), mat_bone)
-    sh_R = make_sphere("ShR", ( 1.6*ws, 0, 7.6*h), (0.35*ws, 0.35*ws, 0.35*h), mat_bone)
-    el_L = make_sphere("ElL", (-2.6*ws, -0.1*ws, 5.8*h), (0.25*ws, 0.25*ws, 0.25*h), mat_bone)
-    el_R = make_sphere("ElR", ( 2.6*ws, -0.1*ws, 5.8*h), (0.25*ws, 0.25*ws, 0.25*h), mat_bone)
-    add(sh_L, "Arm_L"); add(sh_R, "Arm_R"); add(el_L, "Arm_L"); add(el_R, "Arm_R")
-    
-    hum_L = make_cylinder("HumL", (-2.1*ws, -0.05*ws, 6.7*h), 0.2*ws, 2.0*h, (0, math.pi/4, 0), mat_bone)
-    hum_R = make_cylinder("HumR", ( 2.1*ws, -0.05*ws, 6.7*h), 0.2*ws, 2.0*h, (0, -math.pi/4, 0), mat_bone)
-    add(hum_L, "Arm_L"); add(hum_R, "Arm_R")
-    
-    for b_offset in [-0.1, 0.1]:
-        lowL = make_cylinder(f"LowL_{b_offset}", (-3.1*ws+b_offset*ws, -0.15*ws, 4.8*h), 0.12*ws, 1.8*h, (0, math.pi/6, 0), mat_bone)
-        lowR = make_cylinder(f"LowR_{b_offset}", ( 3.1*ws+b_offset*ws, -0.15*ws, 4.8*h), 0.12*ws, 1.8*h, (0, -math.pi/6, 0), mat_bone)
-        add(lowL, "Arm_L"); add(lowR, "Arm_R")
-        
-    hand_L = make_box("HandL", (-3.6*ws, -0.2*ws, 3.8*h), (0.5*ws, 0.5*ws, 0.8*h), mat_bone)
-    hand_R = make_box("HandR", ( 3.6*ws, -0.2*ws, 3.8*h), (0.5*ws, 0.5*ws, 0.8*h), mat_bone)
-    add(hand_L, "Arm_L"); add(hand_R, "Arm_R")
-
-    # --- 6. LEGS ---
-    hip_L = make_sphere("HipL", (-0.8*ws, 0, 4.1*h), (0.35*ws, 0.35*ws, 0.35*h), mat_bone)
-    hip_R = make_sphere("HipR", ( 0.8*ws, 0, 4.1*h), (0.35*ws, 0.35*ws, 0.35*h), mat_bone)
-    kn_L  = make_sphere("KnL",  (-0.8*ws, -0.2*ws, 2.2*h), (0.3*ws, 0.3*ws, 0.3*h), mat_bone) # Knees point slightly forward (-Y)
-    kn_R  = make_sphere("KnR",  ( 0.8*ws, -0.2*ws, 2.2*h), (0.3*ws, 0.3*ws, 0.3*h), mat_bone)
-    add(hip_L, "Leg_L"); add(hip_R, "Leg_R"); add(kn_L, "Leg_L"); add(kn_R, "Leg_R")
-    
-    fem_L = make_cylinder("FemL", (-0.8*ws, -0.1*ws, 3.1*h), 0.25*ws, 2.2*h, (-0.1, 0, 0), mat_bone)
-    fem_R = make_cylinder("FemR", ( 0.8*ws, -0.1*ws, 3.1*h), 0.25*ws, 2.2*h, (-0.1, 0, 0), mat_bone)
-    add(fem_L, "Leg_L"); add(fem_R, "Leg_R")
-    
-    for b_offset in [-0.1, 0.1]:
-        tibL = make_cylinder(f"TibL_{b_offset}", (-0.8*ws + b_offset*ws, -0.1*ws, 1.1*h), 0.13*ws, 2.2*h, (0.05,0,0), mat_bone)
-        tibR = make_cylinder(f"TibR_{b_offset}", ( 0.8*ws + b_offset*ws, -0.1*ws, 1.1*h), 0.13*ws, 2.2*h, (0.05,0,0), mat_bone)
-        add(tibL, "Leg_L"); add(tibR, "Leg_R")
-    
-    # Feet pointing forward (-Y)
-    foot_L = make_box("FootL", (-0.8*ws, -0.6*ws, 0.2*h), (0.5*ws, 1.6*ws, 0.3*h), mat_bone)
-    foot_R = make_box("FootR", ( 0.8*ws, -0.6*ws, 0.2*h), (0.5*ws, 1.6*ws, 0.3*h), mat_bone)
-    add(foot_L, "Leg_L"); add(foot_R, "Leg_R")
-
-    # ── 7. Bake and Export ──
-    bpy.context.scene.cursor.location = (0.0, 0.0, 0.0)
-    bake_animations(arm_obj, h, ws)
+    # 5. Export
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.export_scene.fbx(
-        filepath               = export_path,
-        use_selection          = False,
-        object_types           = {'ARMATURE', 'MESH'},
-        axis_forward           = '-Z',
-        axis_up                = 'Y',
-        bake_anim              = True,
+        filepath                  = export_path,
+        use_selection             = False,
+        object_types              = {'ARMATURE', 'MESH'},
+        axis_forward              = 'Z',
+        axis_up                   = 'Y',
+        bake_anim                 = True,
         bake_anim_use_all_actions = True,
-        bake_anim_step         = 1,
+        bake_anim_step            = 1,
         bake_anim_simplify_factor = 0.0,
-        add_leaf_bones         = False,
-        mesh_smooth_type       = 'FACE'
+        add_leaf_bones            = False,
+        mesh_smooth_type          = 'FACE',
+        use_mesh_modifiers        = True,
     )
-    print(f"[MegaZoida] Custom Anatomical Skeleton Exported: {export_path}")
+    print(f"[MegaZoida] Skeleton exported → {export_path}")
 
+
+# ─── Run ───────────────────────────────────────────────────────────────────
 p = r"c:\Users\chapa\Desktop\MegaZoida\public\assets\models\\"
-build_anatomical_skeleton("AnatomicalSkeleton", 15.0, p + "Enemy_Skeleton.fbx")
+
+build(p + "Enemy_Skeleton.fbx", S=23.0)   # TALL enemy skeleton size
+# Uncomment to also generate hero-sized variants:
+# build(p + "Hero_Human.fbx",    S=20.0)
+# build(p + "Hero_Knight.fbx",   S=20.0)
+# build(p + "Hero_Archer.fbx",   S=20.0)
