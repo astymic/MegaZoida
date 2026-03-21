@@ -205,104 +205,107 @@ def bake_animations(arm_obj: bpy.types.Object, h: float, ws: float):
 def build_anatomical_skeleton(char_name: str, size_mult: float, export_path: str):
     clear_scene()
 
-    bone_col = (0.85, 0.82, 0.70, 1) # Yellowish distressed bone color
-    drk_col  = (0.2, 0.2, 0.2, 1)    # Dark cavities (eyes, nose, spine gaps)
+    bone_col = (0.85, 0.82, 0.70, 1) # Realistic brownish bone
+    drk_col  = (0.1, 0.1, 0.1, 1)    # Dark cavities (nose, spine gaps)
     
-    h = (2.0 * size_mult) / 10.0
-    ws = (1.6 * size_mult) / 10.0
+    # Make them taller! Increase height scalar considerably compared to width scalar
+    total_height = 2.4 * size_mult # Was 2.0
+    h = total_height / 10.0
+    ws = (1.4 * size_mult) / 10.0 # Make them thinner
     
     arm_obj = create_armature(char_name, h, ws)
     
     mat_bone = make_material(char_name + "_BoneMat", bone_col)
     mat_dark = make_material(char_name + "_DarkMat", drk_col)
     
+    # Glowing Red Eyes
+    mat_glow = bpy.data.materials.new(name="RedGlow")
+    mat_glow.use_nodes = True
+    bsdf = mat_glow.node_tree.nodes["Principled BSDF"]
+    bsdf.inputs["Base Color"].default_value = (1, 0, 0, 1)
+    bsdf.inputs["Emission Color"].default_value = (1, 0, 0, 1)
+    bsdf.inputs["Emission Strength"].default_value = 10.0
+    
     meshes = []
     def add(mesh_obj, bone):
         parent_mesh_to_bone(mesh_obj, arm_obj, bone)
         meshes.append(mesh_obj)
 
-    # --- 1. SKULL ---
-    skull = make_sphere("Skull", (0, 0, 9*h), (1.4*ws, 1.4*ws, 1.3*h), mat_bone)
-    jaw = make_box("Jaw", (0, 0.4*ws, 8.0*h), (1.0*ws, 1.0*ws, 0.8*h), mat_bone)
-    eyeL = make_sphere("Eye_L", (-0.5*ws, 1.1*ws, 8.8*h), (0.4*ws, 0.4*ws, 0.4*h), mat_dark)
-    eyeR = make_sphere("Eye_R", ( 0.5*ws, 1.1*ws, 8.8*h), (0.4*ws, 0.4*ws, 0.4*h), mat_dark)
-    nose = make_cylinder("Nose", (0, 1.3*ws, 8.3*h), 0.2*ws, 0.5*h, (math.pi/2,0,0), mat_dark)
+    # --- 1. SKULL (Facing -Y) ---
+    skull = make_sphere("Skull", (0, 0, 9*h), (1.3*ws, 1.5*ws, 1.4*h), mat_bone)
+    jaw = make_box("Jaw", (0, -0.4*ws, 8.0*h), (0.9*ws, 1.2*ws, 0.8*h), mat_bone) # y is negative
+    eyeL = make_sphere("Eye_L", (-0.4*ws, -1.2*ws, 8.8*h), (0.35*ws, 0.35*ws, 0.35*h), mat_glow)
+    eyeR = make_sphere("Eye_R", ( 0.4*ws, -1.2*ws, 8.8*h), (0.35*ws, 0.35*ws, 0.35*h), mat_glow)
+    nose = make_cylinder("Nose", (0, -1.3*ws, 8.3*h), 0.15*ws, 0.5*h, (math.pi/2,0,0), mat_dark)
     add(skull, "Head"); add(jaw, "Head"); add(eyeL, "Head"); add(eyeR, "Head"); add(nose, "Head")
 
     # --- 2. SPINE (Segmented) ---
-    for i in range(11):
-        z = 5.0*h + i * (3.0*h / 10)
-        thick = 0.5*ws if i < 8 else 0.3*ws
+    for i in range(13):
+        z = 4.5*h + i * (3.5*h / 12)
+        thick = 0.4*ws if i < 9 else 0.25*ws
         mat = mat_bone if i % 2 == 0 else mat_dark
-        s = make_cylinder(f"Spine_{i}", (0, -0.3*ws, z), thick, 0.2*h, (0,0,0), mat)
+        s = make_cylinder(f"Spine_{i}", (0, 0.2*ws, z), thick, 0.2*h, (0,0,0), mat) # Spine pushed slightly back (+Y)
         add(s, "Root")
 
     # --- 3. PELVIS ---
-    pelvis_base = make_box("Pelvis_Base", (0, 0, 4.8*h), (1.6*ws, 0.8*ws, 0.8*h), mat_bone)
-    il_L = make_sphere("Ilium_L", (-0.8*ws, 0, 5.0*h), (0.8*ws, 0.4*ws, 0.8*h), mat_bone)
-    il_R = make_sphere("Ilium_R", ( 0.8*ws, 0, 5.0*h), (0.8*ws, 0.4*ws, 0.8*h), mat_bone)
+    pelvis_base = make_box("Pelvis_Base", (0, 0, 4.3*h), (1.4*ws, 0.8*ws, 0.8*h), mat_bone)
+    il_L = make_sphere("Ilium_L", (-0.8*ws, -0.1*ws, 4.5*h), (0.9*ws, 0.5*ws, 0.9*h), mat_bone)
+    il_R = make_sphere("Ilium_R", ( 0.8*ws, -0.1*ws, 4.5*h), (0.9*ws, 0.5*ws, 0.9*h), mat_bone)
     add(pelvis_base, "Root"); add(il_L, "Root"); add(il_R, "Root")
     
     # --- 4. RIBCAGE ---
-    # Collarbones
-    clr_L = make_cylinder("Collar_L", (-0.8*ws, 0, 7.8*h), 0.25*ws, 1.8*ws, (0, math.pi/2, -0.2), mat_bone)
-    clr_R = make_cylinder("Collar_R", ( 0.8*ws, 0, 7.8*h), 0.25*ws, 1.8*ws, (0, math.pi/2, 0.2), mat_bone)
-    sternum = make_box("Sternum", (0, 0.8*ws, 6.5*h), (0.3*ws, 0.2*ws, 1.5*h), mat_bone)
+    clr_L = make_cylinder("Collar_L", (-0.8*ws, -0.1*ws, 7.8*h), 0.2*ws, 1.8*ws, (0, math.pi/2, 0.2), mat_bone)
+    clr_R = make_cylinder("Collar_R", ( 0.8*ws, -0.1*ws, 7.8*h), 0.2*ws, 1.8*ws, (0, math.pi/2, -0.2), mat_bone)
+    sternum = make_box("Sternum", (0, -0.8*ws, 6.5*h), (0.25*ws, 0.15*ws, 1.8*h), mat_bone)
     add(clr_L, "Root"); add(clr_R, "Root"); add(sternum, "Root")
 
-    for i in range(7):
-        z = 7.5*h - i * 0.35*h
-        w = 1.3 - abs(i-3)*0.15
-        d = 0.8 + (i*0.05)
-        # We simulate curved ribs by taking thin boxes and rotating them slightly
-        ribL = make_box(f"Rib_L_{i}", (-w*0.8*ws, 0.4*ws, z), (w*1.5*ws, d*1.2*ws, 0.15*h), mat_bone)
-        ribR = make_box(f"Rib_R_{i}", ( w*0.8*ws, 0.4*ws, z), (w*1.5*ws, d*1.2*ws, 0.15*h), mat_bone)
-        # Taper to the side
+    for i in range(9): # More ribs
+        z = 7.5*h - i * 0.3*h
+        w = 1.3 - abs(i-4)*0.15
+        d = 0.9 + (i*0.03)
+        ribL = make_box(f"Rib_L_{i}", (-w*0.8*ws, -0.4*ws, z), (w*1.5*ws, d*1.2*ws, 0.1*h), mat_bone)
+        ribR = make_box(f"Rib_R_{i}", ( w*0.8*ws, -0.4*ws, z), (w*1.5*ws, d*1.2*ws, 0.1*h), mat_bone)
         add(ribL, "Root"); add(ribR, "Root")
 
     # --- 5. ARMS ---
-    # Joints
-    sh_L = make_sphere("ShL", (-1.6*ws, 0, 7.6*h), (0.4*ws, 0.4*ws, 0.4*h), mat_bone)
-    sh_R = make_sphere("ShR", ( 1.6*ws, 0, 7.6*h), (0.4*ws, 0.4*ws, 0.4*h), mat_bone)
-    el_L = make_sphere("ElL", (-2.6*ws, 0, 5.8*h), (0.3*ws, 0.3*ws, 0.3*h), mat_bone)
-    el_R = make_sphere("ElR", ( 2.6*ws, 0, 5.8*h), (0.3*ws, 0.3*ws, 0.3*h), mat_bone)
-    add(sh_L, "Arm_L"); add(sh_R, "Arm_R")
-    add(el_L, "Arm_L"); add(el_R, "Arm_R")
-    # Humerus (upper arm)
-    hum_L = make_cylinder("HumL", (-2.1*ws, 0, 6.7*h), 0.25*ws, 2.0*h, (0, math.pi/4, 0), mat_bone)
-    hum_R = make_cylinder("HumR", ( 2.1*ws, 0, 6.7*h), 0.25*ws, 2.0*h, (0, -math.pi/4, 0), mat_bone)
+    sh_L = make_sphere("ShL", (-1.6*ws, 0, 7.6*h), (0.35*ws, 0.35*ws, 0.35*h), mat_bone)
+    sh_R = make_sphere("ShR", ( 1.6*ws, 0, 7.6*h), (0.35*ws, 0.35*ws, 0.35*h), mat_bone)
+    el_L = make_sphere("ElL", (-2.6*ws, -0.1*ws, 5.8*h), (0.25*ws, 0.25*ws, 0.25*h), mat_bone)
+    el_R = make_sphere("ElR", ( 2.6*ws, -0.1*ws, 5.8*h), (0.25*ws, 0.25*ws, 0.25*h), mat_bone)
+    add(sh_L, "Arm_L"); add(sh_R, "Arm_R"); add(el_L, "Arm_L"); add(el_R, "Arm_R")
+    
+    hum_L = make_cylinder("HumL", (-2.1*ws, -0.05*ws, 6.7*h), 0.2*ws, 2.0*h, (0, math.pi/4, 0), mat_bone)
+    hum_R = make_cylinder("HumR", ( 2.1*ws, -0.05*ws, 6.7*h), 0.2*ws, 2.0*h, (0, -math.pi/4, 0), mat_bone)
     add(hum_L, "Arm_L"); add(hum_R, "Arm_R")
-    # Radius & Ulna (lower arm - slightly splayed)
-    for b_offset in [-0.15, 0.15]:
-        lowL = make_cylinder(f"LowL_{b_offset}", (-3.1*ws+b_offset*ws, 0, 4.8*h), 0.15*ws, 1.8*h, (0, math.pi/6, 0), mat_bone)
-        lowR = make_cylinder(f"LowR_{b_offset}", ( 3.1*ws+b_offset*ws, 0, 4.8*h), 0.15*ws, 1.8*h, (0, -math.pi/6, 0), mat_bone)
+    
+    for b_offset in [-0.1, 0.1]:
+        lowL = make_cylinder(f"LowL_{b_offset}", (-3.1*ws+b_offset*ws, -0.15*ws, 4.8*h), 0.12*ws, 1.8*h, (0, math.pi/6, 0), mat_bone)
+        lowR = make_cylinder(f"LowR_{b_offset}", ( 3.1*ws+b_offset*ws, -0.15*ws, 4.8*h), 0.12*ws, 1.8*h, (0, -math.pi/6, 0), mat_bone)
         add(lowL, "Arm_L"); add(lowR, "Arm_R")
-    # Hands (clawed fingers)
-    hand_L = make_box("HandL", (-3.6*ws, 0, 3.8*h), (0.6*ws, 0.6*ws, 0.6*h), mat_bone)
-    hand_R = make_box("HandR", ( 3.6*ws, 0, 3.8*h), (0.6*ws, 0.6*ws, 0.6*h), mat_bone)
+        
+    hand_L = make_box("HandL", (-3.6*ws, -0.2*ws, 3.8*h), (0.5*ws, 0.5*ws, 0.8*h), mat_bone)
+    hand_R = make_box("HandR", ( 3.6*ws, -0.2*ws, 3.8*h), (0.5*ws, 0.5*ws, 0.8*h), mat_bone)
     add(hand_L, "Arm_L"); add(hand_R, "Arm_R")
 
     # --- 6. LEGS ---
-    hip_L = make_sphere("HipL", (-0.8*ws, 0, 4.6*h), (0.4*ws, 0.4*ws, 0.4*h), mat_bone)
-    hip_R = make_sphere("HipR", ( 0.8*ws, 0, 4.6*h), (0.4*ws, 0.4*ws, 0.4*h), mat_bone)
-    kn_L  = make_sphere("KnL",  (-0.8*ws, 0.1*ws, 2.4*h), (0.35*ws, 0.35*ws, 0.35*h), mat_bone)
-    kn_R  = make_sphere("KnR",  ( 0.8*ws, 0.1*ws, 2.4*h), (0.35*ws, 0.35*ws, 0.35*h), mat_bone)
-    add(hip_L, "Leg_L"); add(hip_R, "Leg_R")
-    add(kn_L, "Leg_L"); add(kn_R, "Leg_R")
+    hip_L = make_sphere("HipL", (-0.8*ws, 0, 4.1*h), (0.35*ws, 0.35*ws, 0.35*h), mat_bone)
+    hip_R = make_sphere("HipR", ( 0.8*ws, 0, 4.1*h), (0.35*ws, 0.35*ws, 0.35*h), mat_bone)
+    kn_L  = make_sphere("KnL",  (-0.8*ws, -0.2*ws, 2.2*h), (0.3*ws, 0.3*ws, 0.3*h), mat_bone) # Knees point slightly forward (-Y)
+    kn_R  = make_sphere("KnR",  ( 0.8*ws, -0.2*ws, 2.2*h), (0.3*ws, 0.3*ws, 0.3*h), mat_bone)
+    add(hip_L, "Leg_L"); add(hip_R, "Leg_R"); add(kn_L, "Leg_L"); add(kn_R, "Leg_R")
     
-    # Femur
-    fem_L = make_cylinder("FemL", (-0.8*ws, 0, 3.5*h), 0.3*ws, 2.2*h, (0, 0, 0), mat_bone)
-    fem_R = make_cylinder("FemR", ( 0.8*ws, 0, 3.5*h), 0.3*ws, 2.2*h, (0, 0, 0), mat_bone)
+    fem_L = make_cylinder("FemL", (-0.8*ws, -0.1*ws, 3.1*h), 0.25*ws, 2.2*h, (-0.1, 0, 0), mat_bone)
+    fem_R = make_cylinder("FemR", ( 0.8*ws, -0.1*ws, 3.1*h), 0.25*ws, 2.2*h, (-0.1, 0, 0), mat_bone)
     add(fem_L, "Leg_L"); add(fem_R, "Leg_R")
-    # Tibia + Fibula (Double bones for calves)
-    for b_offset in [-0.15, 0.15]:
-        tibL = make_cylinder(f"TibL_{b_offset}", (-0.8*ws + b_offset*ws, 0, 1.2*h), 0.15*ws, 2.2*h, (0,0,0), mat_bone)
-        tibR = make_cylinder(f"TibR_{b_offset}", ( 0.8*ws + b_offset*ws, 0, 1.2*h), 0.15*ws, 2.2*h, (0,0,0), mat_bone)
+    
+    for b_offset in [-0.1, 0.1]:
+        tibL = make_cylinder(f"TibL_{b_offset}", (-0.8*ws + b_offset*ws, -0.1*ws, 1.1*h), 0.13*ws, 2.2*h, (0.05,0,0), mat_bone)
+        tibR = make_cylinder(f"TibR_{b_offset}", ( 0.8*ws + b_offset*ws, -0.1*ws, 1.1*h), 0.13*ws, 2.2*h, (0.05,0,0), mat_bone)
         add(tibL, "Leg_L"); add(tibR, "Leg_R")
     
-    # Feet (Skeletal toes)
-    foot_L = make_box("FootL", (-0.8*ws, 0.4*ws, 0.2*h), (0.6*ws, 1.4*ws, 0.4*h), mat_bone)
-    foot_R = make_box("FootR", ( 0.8*ws, 0.4*ws, 0.2*h), (0.6*ws, 1.4*ws, 0.4*h), mat_bone)
+    # Feet pointing forward (-Y)
+    foot_L = make_box("FootL", (-0.8*ws, -0.6*ws, 0.2*h), (0.5*ws, 1.6*ws, 0.3*h), mat_bone)
+    foot_R = make_box("FootR", ( 0.8*ws, -0.6*ws, 0.2*h), (0.5*ws, 1.6*ws, 0.3*h), mat_bone)
     add(foot_L, "Leg_L"); add(foot_R, "Leg_R")
 
     # ── 7. Bake and Export ──
