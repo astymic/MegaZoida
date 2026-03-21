@@ -150,6 +150,7 @@ void main() {
 export interface EnemyRenderData {
     x: number;
     y: number;
+    altitude: number;
     rotY: number;
     hp: number;
     maxHp: number;
@@ -229,7 +230,7 @@ export class EnemyRenderer {
             const scale = e.isBoss ? this.BS : this.NS;
 
             // Body instance matrix
-            _dummy.position.set(e.x, 0, e.y);
+            _dummy.position.set(e.x, e.altitude, e.y);
             _dummy.rotation.set(0, e.rotY, 0);
             _dummy.scale.copy(scale);
             _dummy.updateMatrix();
@@ -240,7 +241,7 @@ export class EnemyRenderer {
 
             // HP bar
             const showHp = e.hp > 0 && e.hp < e.maxHp;
-            const barY = e.radius * scale.y * 2.5 + 10;
+            const barY = e.altitude + e.radius * scale.y * 2.5 + 10;
             const barW = e.radius * 2 * scale.x;
 
             if (showHp) {

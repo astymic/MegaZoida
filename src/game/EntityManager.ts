@@ -215,6 +215,7 @@ export class EntityManager {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const e = this.enemies[i];
             e.update(dt, this.player);
+            e.altitude = this.envManager.getTerrainHeightAt(e.x, e.y);
 
             // Player collision
             const pDx = this.player.x - e.x;

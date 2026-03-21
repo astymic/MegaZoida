@@ -13,6 +13,7 @@ export class Enemy {
     // World position
     public x: number = 0;
     public y: number = 0;
+    public altitude: number = 0;
 
     // Stats
     public radius: number = 15;
