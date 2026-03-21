@@ -249,6 +249,15 @@ def build_character(char_name: str,
     ma = make_material(char_name + "_Arm",   arm_col)
     ml = make_material(char_name + "_Leg",   leg_col)
 
+    # Create special emissive materials
+    glow_red = make_material(char_name + "_GlowR", (1, 0, 0, 1))
+    glow_red.node_tree.nodes["Principled BSDF"].inputs["Emission Color"].default_value = (1, 0, 0, 1)
+    glow_red.node_tree.nodes["Principled BSDF"].inputs["Emission Strength"].default_value = 5.0
+
+    wood = make_material("Wood", (0.4, 0.2, 0.05, 1))
+    iron = make_material("Iron", (0.8, 0.8, 0.8, 1))
+
+    # Base parts
     parts = [
         # (mesh_name,           location,              size,              material, bone)
         (char_name+"_Head",   (0,        0, 9*h),   (3.6*ws, d, 2*h),   mh, "Head"),
@@ -258,6 +267,53 @@ def build_character(char_name: str,
         (char_name+"_Leg_L",  (-1.0*ws, 0, 2*h),   (1.2*ws, d, 4*h),   ml, "Leg_L"),
         (char_name+"_Leg_R",  ( 1.0*ws, 0, 2*h),   (1.2*ws, d, 4*h),   ml, "Leg_R"),
     ]
+
+    # --- CREATIVE DETAILS ---
+    if char_name == "Skeleton":
+        # Hollow eyes (red glowing blocks on face)
+        parts.append((char_name+"_Eye_L", (-0.8*ws, -d/2 - 0.2, 9.2*h), (0.6*ws, 0.4, 0.6*h), glow_red, "Head"))
+        parts.append((char_name+"_Eye_R", ( 0.8*ws, -d/2 - 0.2, 9.2*h), (0.6*ws, 0.4, 0.6*h), glow_red, "Head"))
+        # Ribs (horizontal white stripes across the body)
+        for i in range(3):
+            parts.append((char_name+f"_Rib_{i}", (0, -d/2 - 0.2, (5.0 + i*1.2)*h), (4.5*ws, 0.4, 0.4*h), mh, "Root"))
+        # Make the body thinner to look like a spine instead of a full block
+        parts[1] = (char_name+"_Spine", (0, 0, 6*h), (1.0*ws, d*0.8, 4*h), mh, "Root")
+
+    elif char_name == "Knight":
+        # Helmet Visor (dark slit on face)
+        visor_mat = make_material("Visor", (0.1, 0.1, 0.1, 1))
+        parts.append((char_name+"_Visor", (0, -d/2 - 0.2, 9.0*h), (3.8*ws, 0.4, 0.6*h), visor_mat, "Head"))
+        # Plume (red feather on top of helmet)
+        plume_mat = make_material("Plume", (0.8, 0.1, 0.1, 1))
+        parts.append((char_name+"_Plume", (0, 0, 10.5*h), (1.0*ws, d*0.8, 1.5*h), plume_mat, "Head"))
+        # Huge Pauldrons (Shoulder pads)
+        parts.append((char_name+"_Pauldron_L", (-3.0*ws, 0, 7.5*h), (2.0*ws, d*1.2, 1.5*h), iron, "Root"))
+        parts.append((char_name+"_Pauldron_R", ( 3.0*ws, 0, 7.5*h), (2.0*ws, d*1.2, 1.5*h), iron, "Root"))
+        # Massive Sword in Right Hand
+        parts.append((char_name+"_SwordHilt", ( 2.6*ws, d, 4.0*h), (0.6*ws, 0.6*ws, 1.5*h), wood, "Arm_R"))
+        parts.append((char_name+"_SwordGuard", ( 2.6*ws, d, 3.2*h), (2.0*ws, 0.8*ws, 0.4*h), iron, "Arm_R"))
+        parts.append((char_name+"_SwordBlade", ( 2.6*ws, d+0.2, 0.0*h), (1.2*ws, 0.2, 6.0*h), iron, "Arm_R"))
+
+    elif char_name == "Archer":
+        # Green Robin Hood Hat
+        hat_mat = make_material("Hat", (0.1, 0.6, 0.2, 1))
+        parts.append((char_name+"_HatBase", (0, 0, 10.2*h), (4.0*ws, d*1.1, 0.6*h), hat_mat, "Head"))
+        parts.append((char_name+"_HatTip", (0, 0, 11.0*h), (2.0*ws, d*0.8, 1.0*h), hat_mat, "Head"))
+        # Quiver on back with arrows
+        parts.append((char_name+"_Quiver", (-1.0*ws, d/2 + 0.5, 6.0*h), (1.2*ws, 1.0, 3.5*h), wood, "Root"))
+        parts.append((char_name+"_ArrowFeather", (-1.2*ws, d/2 + 0.6, 8.2*h), (0.6*ws, 0.6, 1.0*h), iron, "Root"))
+        # Longbow in Left Hand
+        parts.append((char_name+"_BowWood", (-2.6*ws, d, 4.0*h), (0.5*ws, 0.5*ws, 6.0*h), wood, "Arm_L"))
+
+    elif char_name == "Human":
+        # Hair (Brown block on top/back)
+        hair_mat = make_material("Hair", (0.3, 0.15, 0.05, 1))
+        parts.append((char_name+"_HairTop", (0, 0, 10.2*h), (3.8*ws, d*1.1, 0.8*h), hair_mat, "Head"))
+        parts.append((char_name+"_HairBack", (0, d/2 + 0.2, 9.0*h), (3.8*ws, 0.5, 2.0*h), hair_mat, "Head"))
+        # Backpack
+        bp_mat = make_material("Backpack", (0.4, 0.3, 0.2, 1))
+        parts.append((char_name+"_Backpack", (0, d/2 + 1.0, 6.5*h), (3.0*ws, 1.5, 3.0*h), bp_mat, "Root"))
+
 
     mesh_objects = []
     for mesh_name, loc, size, mat, bone in parts:
