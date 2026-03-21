@@ -151,11 +151,22 @@ export class Enemy {
     public remove() {
         this.scene.remove(this.hpGroup);
         this.scene.remove(this.mesh);
+
         this.mesh.geometry.dispose();
         if (Array.isArray(this.mesh.material)) {
             this.mesh.material.forEach((m) => m.dispose());
         } else {
             (this.mesh.material as THREE.Material).dispose();
         }
+
+        this.hpGroup.children.forEach((child) => {
+            if (child instanceof THREE.Mesh) {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+                    else (child.material as THREE.Material).dispose();
+                }
+            }
+        });
     }
 }

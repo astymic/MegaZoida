@@ -54,9 +54,16 @@ export class Game {
         this.camera.lookAt(0, 0, 0);
 
         // Renderer — optimized for mobile
-        this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+        this.renderer = new THREE.WebGLRenderer({
+            antialias: false,
+            powerPreference: 'high-performance',
+            precision: 'mediump',
+            alpha: false,
+            stencil: false,
+        });
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // cap for mobile
         this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.autoClear = true;
         this.container.appendChild(this.renderer.domElement);
 
         // Lighting
@@ -82,6 +89,7 @@ export class Game {
 
         window.addEventListener('resize', () => this.onWindowResize());
         this.setupHUD();
+        this.initFpsCounter();
         this.setupCameraControls();
     }
 
@@ -265,11 +273,33 @@ export class Game {
         });
     }
 
+    // --- Optimization FPS Tracker ---
+    private fpsHistory: number[] = [];
+    private fpsDiv!: HTMLDivElement;
+
+    private initFpsCounter() {
+        this.fpsDiv = document.createElement('div');
+        this.fpsDiv.style.cssText =
+            'position:fixed;top:4px;right:4px;color:#0f0;font:12px monospace;z-index:9999;background:rgba(0,0,0,0.5);padding:5px;pointer-events:none;';
+        document.body.appendChild(this.fpsDiv);
+    }
+
+    private updateFps(dt: number) {
+        if (dt <= 0) return;
+        this.fpsHistory.push(1 / dt);
+        if (this.fpsHistory.length > 60) this.fpsHistory.shift();
+        const avg = this.fpsHistory.reduce((a, b) => a + b) / this.fpsHistory.length;
+        const min = Math.min(...this.fpsHistory);
+        this.fpsDiv.textContent = `FPS avg:${avg.toFixed(0)} min:${min.toFixed(0)} dc:${this.renderer.info.render.calls} tex:${this.renderer.info.memory.textures}`;
+    }
+
     private loop(time: number) {
         if (!this.isRunning || this.isPaused || this.state !== GameState.PLAYING) return;
 
         const deltaTime = (time - this.lastTime) / 1000;
         this.lastTime = time;
+
+        this.updateFps(deltaTime);
 
         this.update(deltaTime, time / 1000);
         this.render();

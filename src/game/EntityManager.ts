@@ -18,6 +18,9 @@ export class EntityManager {
     private scene: THREE.Scene;
     private envManager: EnvironmentManager;
 
+    private collisionTimer = 0;
+    private readonly COLLISION_INTERVAL = 0.05;
+
     constructor(scene: THREE.Scene, envManager: EnvironmentManager) {
         this.scene = scene;
         this.envManager = envManager;
@@ -155,25 +158,29 @@ export class EntityManager {
         }
 
         // Enemy-Enemy Soft Collisions
-        for (let i = 0; i < this.enemies.length; i++) {
-            for (let j = i + 1; j < this.enemies.length; j++) {
-                const e1 = this.enemies[i];
-                const e2 = this.enemies[j];
-                const dx = e2.x - e1.x;
-                const dy = e2.y - e1.y;
-                const distSq = dx * dx + dy * dy;
-                const minDist = e1.radius + e2.radius;
+        this.collisionTimer += dt;
+        if (this.collisionTimer >= this.COLLISION_INTERVAL) {
+            this.collisionTimer = 0;
+            for (let i = 0; i < this.enemies.length; i++) {
+                for (let j = i + 1; j < this.enemies.length; j++) {
+                    const e1 = this.enemies[i];
+                    const e2 = this.enemies[j];
+                    const dx = e2.x - e1.x;
+                    const dy = e2.y - e1.y;
+                    const distSq = dx * dx + dy * dy;
+                    const minDist = e1.radius + e2.radius;
 
-                if (distSq < minDist * minDist && distSq > 0) {
-                    const dist = Math.sqrt(distSq);
-                    const overlap = minDist - dist;
-                    const nx = dx / dist;
-                    const ny = dy / dist;
+                    if (distSq < minDist * minDist && distSq > 0) {
+                        const dist = Math.sqrt(distSq);
+                        const overlap = minDist - dist;
+                        const nx = dx / dist;
+                        const ny = dy / dist;
 
-                    e1.x -= nx * (overlap / 2);
-                    e1.y -= ny * (overlap / 2);
-                    e2.x += nx * (overlap / 2);
-                    e2.y += ny * (overlap / 2);
+                        e1.x -= nx * (overlap / 2);
+                        e1.y -= ny * (overlap / 2);
+                        e2.x += nx * (overlap / 2);
+                        e2.y += ny * (overlap / 2);
+                    }
                 }
             }
         }
