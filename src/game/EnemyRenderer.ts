@@ -77,13 +77,13 @@ function buildGeo(K: number): THREE.BufferGeometry {
 const vert = /* glsl */`
 precision highp float;
 
-// Three.js built-ins
+// Three.js built-in uniforms (always available in ShaderMaterial)
 uniform mat4 modelMatrix;
 uniform mat4 modelViewMatrix;
 uniform mat4 projectionMatrix;
 uniform mat3 normalMatrix;
 
-// InstancedMesh support — Three.js sets USE_INSTANCING and supplies this:
+// InstancedMesh: Three.js provides instanceMatrix when USE_INSTANCING is defined
 #ifdef USE_INSTANCING
   attribute mat4 instanceMatrix;
 #endif
@@ -91,10 +91,10 @@ uniform mat3 normalMatrix;
 attribute vec3 position;
 attribute vec3 normal;
 
-// Per-vertex limb tag (0=torso,1=Lleg,2=Rleg,3=Larm,4=Rarm,5=head)
+// Per-vertex: which bone group (0=torso,1=Lleg,2=Rleg,3=Larm,4=Rarm,5=head)
 attribute float boneGroup;
 
-// Per-instance animation state
+// Per-instance animation (InstancedBufferAttribute on the geometry)
 attribute float instWalkPhase;
 attribute float instWalking;
 
@@ -102,36 +102,33 @@ varying vec3 vNormal;
 
 void main() {
     vec3 pos = position;
-    float ph  = instWalkPhase;
-    float w   = instWalking;
-    float LA  = 5.5 * w;   // leg amplitude  (world units at K=25 scale)
-    float AA  = 4.0 * w;   // arm amplitude
-    float HB  = 1.0 * w;   // head bob
+    float ph = instWalkPhase;
+    float w  = instWalking;
 
-    if (boneGroup == 1.0) {
-        pos.z += sin(ph) * LA;
-        pos.y += max(0.0, -sin(ph)) * LA * 0.3;
-    } else if (boneGroup == 2.0) {
-        pos.z += sin(ph + 3.14159) * LA;
-        pos.y += max(0.0, -sin(ph + 3.14159)) * LA * 0.3;
-    } else if (boneGroup == 3.0) {
-        pos.z += sin(ph + 3.14159) * AA;
-    } else if (boneGroup == 4.0) {
-        pos.z += sin(ph) * AA;
-    } else if (boneGroup == 5.0) {
-        pos.y += abs(sin(ph * 2.0)) * HB;
-    }
+    // Procedural limb offsets in LOCAL skeleton space
+    // Amplitudes are in geometry units (K=25 → 1 unit ≈ 0.04m)
+    float LA = 5.5 * w;
+    float AA = 4.0 * w;
+    float HB = 1.0 * w;
 
-    // Apply per-instance transform
+    if      (boneGroup == 1.0) { pos.z += sin(ph) * LA;           pos.y += max(0.0, -sin(ph)) * LA * 0.3; }
+    else if (boneGroup == 2.0) { pos.z += sin(ph + 3.14159) * LA; pos.y += max(0.0, -sin(ph + 3.14159)) * LA * 0.3; }
+    else if (boneGroup == 3.0) { pos.z += sin(ph + 3.14159) * AA; }
+    else if (boneGroup == 4.0) { pos.z += sin(ph) * AA; }
+    else if (boneGroup == 5.0) { pos.y += abs(sin(ph * 2.0)) * HB; }
+
+    // Correct transform chain:
+    // projectionMatrix * modelViewMatrix * instanceMatrix * localPos
+    // (modelViewMatrix already contains modelMatrix, so we do NOT apply modelMatrix again)
 #ifdef USE_INSTANCING
-    vec4 worldPos = modelMatrix * instanceMatrix * vec4(pos, 1.0);
-    vNormal = normalize(mat3(instanceMatrix) * normal);
+    vec4 mvPos = modelViewMatrix * instanceMatrix * vec4(pos, 1.0);
+    vNormal = normalize(mat3(modelViewMatrix) * mat3(instanceMatrix) * normal);
 #else
-    vec4 worldPos = modelMatrix * vec4(pos, 1.0);
+    vec4 mvPos = modelViewMatrix * vec4(pos, 1.0);
     vNormal = normalize(normalMatrix * normal);
 #endif
 
-    gl_Position = projectionMatrix * modelViewMatrix * worldPos;
+    gl_Position = projectionMatrix * mvPos;
 }
 `;
 
