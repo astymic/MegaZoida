@@ -1,13 +1,12 @@
-import * as THREE from 'three';
 import { EntityManager } from './EntityManager';
 import { Chest } from './Chest';
+import * as THREE from 'three';
 
 export class SpawnerManager {
     private scene: THREE.Scene;
     private entityManager: EntityManager;
 
-    // Config - much higher now with perf fixes!
-    private maxEnemies = 150;
+    private maxEnemies = 200; // high cap — InstancedMesh is cheap!
     private chestSpawnInterval = 30.0;
 
     private lastSpawnTime = 0;
@@ -26,16 +25,16 @@ export class SpawnerManager {
     public update(timeSeconds: number) {
         if (!this.entityManager.player) return;
 
-        // Mob spawning
-        const spawnMultiplier = Math.pow(1.3, Math.floor((this.entityManager.player.level - 1) / 2));
-        const spawnDelay = Math.max(0.15, 0.8 / spawnMultiplier);
+        const p = this.entityManager.player;
+        const mult = Math.pow(1.3, Math.floor((p.level - 1) / 2));
+        const spawnDelay = Math.max(0.1, 0.7 / mult);
 
-        if (timeSeconds - this.lastSpawnTime > spawnDelay && this.entityManager.enemies.length < this.maxEnemies) {
+        if (timeSeconds - this.lastSpawnTime > spawnDelay &&
+            this.entityManager.enemies.length < this.maxEnemies) {
             this.spawnEnemy(timeSeconds);
             this.lastSpawnTime = timeSeconds;
         }
 
-        // Chest spawning
         if (timeSeconds - this.lastChestSpawnTime > this.chestSpawnInterval) {
             this.spawnChest();
             this.lastChestSpawnTime = timeSeconds;
@@ -45,33 +44,35 @@ export class SpawnerManager {
     private spawnEnemy(timeSeconds: number) {
         const p = this.entityManager.player;
         const angle = Math.random() * Math.PI * 2;
-        const dist = 600; // spawn outside view
-        const x = p.x + Math.cos(angle) * dist;
-        const y = p.y + Math.sin(angle) * dist;
-
-        const level = 1 + Math.floor(timeSeconds / 60);
-        this.entityManager.spawnEnemy(x, y, level, false);
+        const dist = 600;
+        this.entityManager.spawnEnemy(
+            p.x + Math.cos(angle) * dist,
+            p.y + Math.sin(angle) * dist,
+            1 + Math.floor(timeSeconds / 60),
+            false
+        );
     }
 
     public spawnBoss(timeSeconds: number) {
         const p = this.entityManager.player;
         const angle = Math.random() * Math.PI * 2;
-        const dist = 600;
-        const x = p.x + Math.cos(angle) * dist;
-        const y = p.y + Math.sin(angle) * dist;
-
-        const level = 1 + Math.floor(timeSeconds / 60);
-        this.entityManager.spawnEnemy(x, y, level, true);
+        this.entityManager.spawnEnemy(
+            p.x + Math.cos(angle) * 600,
+            p.y + Math.sin(angle) * 600,
+            1 + Math.floor(timeSeconds / 60),
+            true
+        );
     }
 
     private spawnChest() {
         const p = this.entityManager.player;
         const angle = Math.random() * Math.PI * 2;
         const dist = 300 + Math.random() * 200;
-        const x = p.x + Math.cos(angle) * dist;
-        const y = p.y + Math.sin(angle) * dist;
-
-        const costMultiplier = Math.pow(1.5, Math.max(0, p.level - 1));
-        this.entityManager.chests.push(new Chest(this.scene, x, y, 10 * costMultiplier));
+        const cost = 10 * Math.pow(1.5, Math.max(0, p.level - 1));
+        this.entityManager.chests.push(new Chest(this.scene,
+            p.x + Math.cos(angle) * dist,
+            p.y + Math.sin(angle) * dist,
+            cost
+        ));
     }
 }

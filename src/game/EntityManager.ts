@@ -1,16 +1,29 @@
+/**
+ * EntityManager — InstancedMesh pipeline edition
+ *
+ * Key changes vs. original:
+ *  - Enemy objects have NO meshes; EnemyRenderer handles all GPU work
+ *  - Object pool for enemies (zero GC pressure during gameplay)
+ *  - SpatialGrid for O(n) enemy-enemy soft-separation (was O(n²))
+ *  - Collision check throttled to 20/s
+ */
+
 import * as THREE from 'three';
 import { Player } from './Player';
 import { Enemy } from './Enemy';
+import { EnemyRenderer } from './EnemyRenderer';
 import { ExpDrop } from './ExpDrop';
 import { CoinDrop } from './CoinDrop';
 import { Chest } from './Chest';
 import { Projectile } from './Projectile';
 import { EnvironmentManager } from './EnvironmentManager';
 
+// ── Spatial Grid ──────────────────────────────────────────────────────────────
+
 class SpatialGrid {
     private cells = new Map<number, Enemy[]>();
-    private cellSize: number;
-    private invCell: number;
+    private readonly cellSize: number;
+    private readonly invCell: number;
 
     constructor(cellSize = 80) {
         this.cellSize = cellSize;
@@ -20,7 +33,6 @@ class SpatialGrid {
     private key(x: number, y: number): number {
         const cx = Math.floor(x * this.invCell);
         const cy = Math.floor(y * this.invCell);
-        // Cantor pairing
         return ((cx + cy) * (cx + cy + 1) >> 1) + cy;
     }
 
@@ -40,39 +52,30 @@ class SpatialGrid {
         for (let dx = -1; dx <= 1; dx++) {
             for (let dy = -1; dy <= 1; dy++) {
                 const cell = this.cells.get(this.key(x + dx * cs, y + dy * cs));
-                if (cell) {
-                    for (const e of cell) result.push(e);
-                }
+                if (cell) for (const e of cell) result.push(e);
             }
         }
         return result;
     }
 }
 
-class EnemyPool {
-    private pool: Enemy[] = [];
-    private scene: THREE.Scene;
+// ── Enemy Pool ────────────────────────────────────────────────────────────────
 
-    constructor(scene: THREE.Scene) {
-        this.scene = scene;
-    }
+class EnemyPool {
+    private readonly pool: Enemy[] = [];
 
     public acquire(x: number, y: number, level: number, isBoss: boolean): Enemy {
-        if (this.pool.length > 0) {
-            const e = this.pool.pop()!;
-            e.spawn(x, y, level, isBoss);
-            return e;
-        }
-        const newE = new Enemy(this.scene);
-        newE.spawn(x, y, level, isBoss);
-        return newE;
+        const e = this.pool.length > 0 ? this.pool.pop()! : new Enemy();
+        e.spawn(x, y, level, isBoss);
+        return e;
     }
 
     public release(e: Enemy) {
-        e.despawn();
         this.pool.push(e);
     }
 }
+
+// ── EntityManager ─────────────────────────────────────────────────────────────
 
 export class EntityManager {
     public player!: Player;
@@ -84,33 +87,32 @@ export class EntityManager {
 
     private scene: THREE.Scene;
     private envManager: EnvironmentManager;
+    private enemyRenderer: EnemyRenderer;
+    private spatialGrid = new SpatialGrid(80);
+    private enemyPool = new EnemyPool();
 
     private collisionTimer = 0;
-    private readonly COLLISION_INTERVAL = 0.05;
-
-    private spatialGrid = new SpatialGrid(80);
-    private enemyPool: EnemyPool;
+    private readonly COLLISION_INTERVAL = 0.05; // 20/s instead of 60/s
 
     constructor(scene: THREE.Scene, envManager: EnvironmentManager) {
         this.scene = scene;
         this.envManager = envManager;
-        this.enemyPool = new EnemyPool(scene);
+        this.enemyRenderer = new EnemyRenderer(scene);
     }
 
-    public initPlayer(heroType: 'human' | 'knight' | 'archer', onLevelUp: () => void) {
+    public initPlayer(heroType: 'human' | 'knight' | 'archer', onLevelUp: () => void): Player {
         this.player = new Player(this.scene, 0, 0, heroType);
         this.player.onLevelUp = onLevelUp;
         return this.player;
     }
 
-    public spawnEnemy(x: number, y: number, level: number, isBoss: boolean = false) {
+    public spawnEnemy(x: number, y: number, level: number, isBoss = false): Enemy {
         const e = this.enemyPool.acquire(x, y, level, isBoss);
         this.enemies.push(e);
         return e;
     }
 
     public clear() {
-        // Return to pool instead of destroying meshes
         for (const e of this.enemies) this.enemyPool.release(e);
         this.enemies = [];
 
@@ -119,81 +121,85 @@ export class EntityManager {
         this.chests.forEach(c => c.remove());
         this.projectiles.forEach(p => p.remove());
 
-        if (this.player && this.player.mesh) {
+        this.expDrops = [];
+        this.coinDrops = [];
+        this.chests = [];
+        this.projectiles = [];
+
+        if (this.player?.mesh) {
             this.scene.remove(this.player.mesh);
             while (this.player.mesh.children.length > 0) {
                 this.player.mesh.remove(this.player.mesh.children[0]);
             }
         }
 
-        this.expDrops = [];
-        this.coinDrops = [];
-        this.chests = [];
-        this.projectiles = [];
+        // Reset instanced renderer counts
+        this.enemyRenderer.update([]);
     }
 
-    public update(dt: number, timeSeconds: number, inputMove: { x: number; y: number }, cameraAngle: number, camera: THREE.PerspectiveCamera, openChestCallback: () => void) {
-        // Translate input based on camera yaw angle
+    public update(
+        dt: number,
+        timeSeconds: number,
+        inputMove: { x: number; y: number },
+        cameraAngle: number,
+        openChestCallback: () => void
+    ) {
         const move = {
             x: inputMove.x * Math.cos(cameraAngle) + inputMove.y * Math.sin(cameraAngle),
-            y: -inputMove.x * Math.sin(cameraAngle) + inputMove.y * Math.cos(cameraAngle)
+            y: -inputMove.x * Math.sin(cameraAngle) + inputMove.y * Math.cos(cameraAngle),
         };
 
-        this.player.update(dt, move, timeSeconds, this.enemies, (p: Projectile) => {
-            this.projectiles.push(p);
-        }, this.scene);
+        this.player.update(dt, move, timeSeconds, this.enemies,
+            (p: Projectile) => this.projectiles.push(p), this.scene);
 
-        // Snap Player to Terrain
+        // Snap player to terrain
         const ph = this.envManager.getTerrainHeightAt(this.player.x, this.player.y);
         this.player.mesh.position.y = ph + this.player.radius;
 
-        // Obstacle collision: push player out of trees/rocks
+        // Player-obstacle separation
         const pr = this.player.radius + 5;
         for (const obs of this.envManager.obstacles) {
             const dx = this.player.x - obs.x;
             const dz = this.player.y - obs.z;
-            const distSq = dx * dx + dz * dz;
-            const minDist = pr + obs.r;
-            if (distSq < minDist * minDist && distSq > 0) {
-                const dist = Math.sqrt(distSq);
-                const overlap = minDist - dist;
-                this.player.x += (dx / dist) * overlap;
-                this.player.y += (dz / dist) * overlap;
+            const d2 = dx * dx + dz * dz;
+            const md = pr + obs.r;
+            if (d2 < md * md && d2 > 0) {
+                const d = Math.sqrt(d2);
+                this.player.x += (dx / d) * (md - d);
+                this.player.y += (dz / d) * (md - d);
             }
         }
 
         this.updateProjectiles(dt);
-        this.updateEnemies(dt, camera);
+        this.updateEnemies(dt);
         this.updateDropsAndChests(dt, openChestCallback);
+
+        // Single batch render call for ALL enemies — 3 draw calls total
+        this.enemyRenderer.update(this.enemies);
     }
+
+    // ── Projectiles ──────────────────────────────────────────────────────────
 
     private updateProjectiles(dt: number) {
         for (let i = this.projectiles.length - 1; i >= 0; i--) {
             const proj = this.projectiles[i];
-            const isAlive = proj.update(dt);
-            const projH = this.envManager.getTerrainHeightAt(proj.x, proj.y);
-            if (proj.mesh) proj.mesh.position.y = projH + proj.radius;
-
-            if (!isAlive) {
+            if (!proj.update(dt)) {
                 proj.remove();
                 this.projectiles.splice(i, 1);
                 continue;
             }
 
-            for (const enemy of this.enemies) {
-                if (!enemy.mesh.visible) continue;
+            const ph = this.envManager.getTerrainHeightAt(proj.x, proj.y);
+            if (proj.mesh) proj.mesh.position.y = ph + proj.radius;
 
-                const dx = enemy.x - proj.x;
-                const dy = enemy.y - proj.y;
-                const distSq = dx * dx + dy * dy;
-                const collDist = enemy.radius + proj.radius;
-
-                if (distSq <= collDist * collDist) {
-                    enemy.hp -= proj.damage;
+            for (let j = this.enemies.length - 1; j >= 0; j--) {
+                const e = this.enemies[j];
+                const dx = e.x - proj.x;
+                const dy = e.y - proj.y;
+                if (dx * dx + dy * dy <= (e.radius + proj.radius) ** 2) {
+                    e.hp -= proj.damage;
                     if (proj.pierce > 0) {
                         proj.pierce--;
-                        proj.x += proj.vx * 0.1;
-                        proj.y += proj.vy * 0.1;
                     } else {
                         proj.remove();
                         this.projectiles.splice(i, 1);
@@ -204,138 +210,116 @@ export class EntityManager {
         }
     }
 
-    private updateEnemies(dt: number, camera: THREE.PerspectiveCamera) {
-        const pr = this.player.radius;
+    // ── Enemies ───────────────────────────────────────────────────────────────
+
+    private updateEnemies(dt: number) {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
-            const enemy = this.enemies[i];
-            enemy.update(dt, this.player, camera.position);
+            const e = this.enemies[i];
+            e.update(dt, this.player);
 
-            const eh = this.envManager.getTerrainHeightAt(enemy.x, enemy.y);
-            enemy.mesh.position.y = eh + enemy.radius;
+            // Player collision
+            const pDx = this.player.x - e.x;
+            const pDy = this.player.y - e.y;
+            const pD2 = pDx * pDx + pDy * pDy;
+            const pMd = this.player.radius + e.radius;
 
-            // Damage player
-            const pDx = this.player.x - enemy.x;
-            const pDy = this.player.y - enemy.y;
-            const pDistSq = pDx * pDx + pDy * pDy;
-            const pCollDist = pr + enemy.radius;
-
-            if (pDistSq <= pCollDist * pCollDist) {
-                if (this.player.iFrameTimer <= 0) {
-                    this.player.hp -= enemy.damage;
-                    this.player.iFrameTimer = 0.5;
-                }
+            if (pD2 <= pMd * pMd && this.player.iFrameTimer <= 0) {
+                this.player.hp -= e.damage;
+                this.player.iFrameTimer = 0.5;
             }
 
-            if (enemy.hp <= 0) {
+            if (e.hp <= 0) {
                 this.player.enemiesKilled++;
-                this.expDrops.push(new ExpDrop(this.scene, enemy.x, enemy.y, enemy.xpYield));
+                const coinMult = 1 + Math.floor(this.player.level / 10);
+                this.expDrops.push(new ExpDrop(this.scene, e.x, e.y, e.xpYield));
+                this.coinDrops.push(new CoinDrop(this.scene, e.x + 10, e.y + 10, coinMult));
 
-                const coinMultiplier = 1 + Math.floor(this.player.level / 10);
-                this.coinDrops.push(new CoinDrop(this.scene, enemy.x + 10, enemy.y + 10, 1 * coinMultiplier));
-
-                // Pooled despawn instead of .remove()
-                this.enemyPool.release(enemy);
+                this.enemyPool.release(e);
                 this.enemies.splice(i, 1);
             }
         }
 
-        // Enemy-Enemy Soft Collisions
+        // Throttled O(n) spatial-grid soft separation
         this.collisionTimer += dt;
         if (this.collisionTimer >= this.COLLISION_INTERVAL) {
             this.collisionTimer = 0;
             this.spatialGrid.rebuild(this.enemies);
+            this.resolveEnemyCollisions();
+        }
+    }
 
-            for (const e1 of this.enemies) {
-                const nearby = this.spatialGrid.getNearby(e1.x, e1.y);
-                for (const e2 of nearby) {
-                    if (e1 === e2) continue;
-                    const dx = e2.x - e1.x;
-                    const dy = e2.y - e1.y;
-                    const distSq = dx * dx + dy * dy;
-                    const minDist = e1.radius + e2.radius;
-
-                    if (distSq < minDist * minDist && distSq > 0) {
-                        const dist = Math.sqrt(distSq);
-                        const overlap = (minDist - dist) * 0.5;
-                        const nx = dx / dist;
-                        const ny = dy / dist;
-
-                        e1.pushX -= nx * overlap;
-                        e1.pushY -= ny * overlap;
-                        e2.pushX += nx * overlap;
-                        e2.pushY += ny * overlap;
-                    }
+    private resolveEnemyCollisions() {
+        for (const e1 of this.enemies) {
+            const nearby = this.spatialGrid.getNearby(e1.x, e1.y);
+            for (const e2 of nearby) {
+                if (e1 === e2) continue;
+                const dx = e2.x - e1.x;
+                const dy = e2.y - e1.y;
+                const d2 = dx * dx + dy * dy;
+                const min = e1.radius + e2.radius;
+                if (d2 < min * min && d2 > 0) {
+                    const d = Math.sqrt(d2);
+                    const ov = (min - d) * 0.5;
+                    const nx = dx / d;
+                    const ny = dy / d;
+                    e1.pushX -= nx * ov;
+                    e1.pushY -= ny * ov;
+                    e2.pushX += nx * ov;
+                    e2.pushY += ny * ov;
                 }
             }
         }
     }
 
+    // ── Drops & Chests ────────────────────────────────────────────────────────
+
     private updateDropsAndChests(dt: number, openChestCallback: () => void) {
-        const magnetRadiusSq = 150 * 150;
-        const pickupRadiusSq = (this.player.radius + 15) * (this.player.radius + 15);
+        const magnetR2 = 150 * 150;
+        const pickupR2 = (this.player.radius + 15) ** 2;
 
-        // ExpDrops
         for (let i = this.expDrops.length - 1; i >= 0; i--) {
-            const drop = this.expDrops[i];
-            const dropH = this.envManager.getTerrainHeightAt(drop.x, drop.y);
-            drop.update(dt, dropH);
-
-            const dx = drop.x - this.player.x;
-            const dy = drop.y - this.player.y;
-            const distSq = dx * dx + dy * dy;
-
-            if (distSq <= pickupRadiusSq) {
-                this.player.addXp(drop.amount);
-                drop.remove();
-                this.expDrops.splice(i, 1);
-            } else if (distSq <= magnetRadiusSq) {
-                const dist = Math.sqrt(distSq);
-                const speed = 400 * dt;
-                drop.x -= (dx / dist) * speed;
-                drop.y -= (dy / dist) * speed;
+            const d = this.expDrops[i];
+            d.update(dt, this.envManager.getTerrainHeightAt(d.x, d.y));
+            const dx = d.x - this.player.x;
+            const dy = d.y - this.player.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 <= pickupR2) {
+                this.player.addXp(d.amount);
+                d.remove(); this.expDrops.splice(i, 1);
+            } else if (d2 <= magnetR2) {
+                const dist = Math.sqrt(d2);
+                d.x -= (dx / dist) * 400 * dt;
+                d.y -= (dy / dist) * 400 * dt;
             }
         }
 
-        // CoinDrops
         for (let i = this.coinDrops.length - 1; i >= 0; i--) {
-            const drop = this.coinDrops[i];
-            const dropH = this.envManager.getTerrainHeightAt(drop.x, drop.y);
-            drop.update(dt, dropH);
-
-            const dx = drop.x - this.player.x;
-            const dy = drop.y - this.player.y;
-            const distSq = dx * dx + dy * dy;
-
-            if (distSq <= pickupRadiusSq) {
-                this.player.addCoins(drop.amount);
-                drop.remove();
-                this.coinDrops.splice(i, 1);
-            } else if (distSq <= magnetRadiusSq) {
-                const dist = Math.sqrt(distSq);
-                const speed = 400 * dt;
-                drop.x -= (dx / dist) * speed;
-                drop.y -= (dy / dist) * speed;
+            const d = this.coinDrops[i];
+            d.update(dt, this.envManager.getTerrainHeightAt(d.x, d.y));
+            const dx = d.x - this.player.x;
+            const dy = d.y - this.player.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 <= pickupR2) {
+                this.player.addCoins(d.amount);
+                d.remove(); this.coinDrops.splice(i, 1);
+            } else if (d2 <= magnetR2) {
+                const dist = Math.sqrt(d2);
+                d.x -= (dx / dist) * 400 * dt;
+                d.y -= (dy / dist) * 400 * dt;
             }
         }
 
-        // Chests
         for (let i = this.chests.length - 1; i >= 0; i--) {
-            const chest = this.chests[i];
-            const ch = this.envManager.getTerrainHeightAt(chest.x, chest.y);
-            chest.mesh.position.y = ch + chest.radius;
-
-            const dx = chest.x - this.player.x;
-            const dy = chest.y - this.player.y;
-            const distSq = dx * dx + dy * dy;
-            const collDist = this.player.radius + chest.radius;
-
-            if (distSq <= collDist * collDist) {
-                if (this.player.coins >= chest.cost) {
-                    this.player.coins -= chest.cost;
-                    chest.remove();
-                    this.chests.splice(i, 1);
-                    openChestCallback();
-                }
+            const c = this.chests[i];
+            c.mesh.position.y = this.envManager.getTerrainHeightAt(c.x, c.y) + c.radius;
+            const dx = c.x - this.player.x;
+            const dy = c.y - this.player.y;
+            const d2 = dx * dx + dy * dy;
+            const md = this.player.radius + c.radius;
+            if (d2 <= md * md && this.player.coins >= c.cost) {
+                this.player.coins -= c.cost;
+                c.remove(); this.chests.splice(i, 1);
+                openChestCallback();
             }
         }
     }

@@ -311,7 +311,7 @@ export class Game {
         const inputMove = this.inputManager.getMovementVector();
 
         // Let EntityManager handle entities and collisions
-        this.entityManager.update(dt, timeSeconds, inputMove, this.cameraAngle, this.camera, () => this.openChest());
+        this.entityManager.update(dt, timeSeconds, inputMove, this.cameraAngle, () => this.openChest());
 
         // Update Camera
         const p = this.entityManager.player;
