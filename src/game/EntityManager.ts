@@ -91,8 +91,7 @@ export class EntityManager {
     private spatialGrid = new SpatialGrid(80);
     private enemyPool = new EnemyPool();
 
-    private collisionTimer = 0;
-    private readonly COLLISION_INTERVAL = 0.05; // 20/s instead of 60/s
+
 
     constructor(scene: THREE.Scene, envManager: EnvironmentManager) {
         this.scene = scene;
@@ -239,16 +238,16 @@ export class EntityManager {
             }
         }
 
-        // Throttled O(n) spatial-grid soft separation
-        this.collisionTimer += dt;
-        if (this.collisionTimer >= this.COLLISION_INTERVAL) {
-            this.collisionTimer = 0;
-            this.spatialGrid.rebuild(this.enemies);
-            this.resolveEnemyCollisions();
-        }
+        // Spatial grid is O(N) and fast, run every frame to prevent jitter
+        this.spatialGrid.rebuild(this.enemies);
+        this.resolveEnemyCollisions(dt);
     }
 
-    private resolveEnemyCollisions() {
+    private resolveEnemyCollisions(dt: number) {
+        // Limit overlap resolve factor to prevent explosions 
+        // 10.0 * dt yields a smooth slide out
+        const smoothRate = Math.min(1.0, dt * 10.0);
+
         for (const e1 of this.enemies) {
             const nearby = this.spatialGrid.getNearby(e1.x, e1.y);
             for (const e2 of nearby) {
@@ -259,7 +258,7 @@ export class EntityManager {
                 const min = e1.radius + e2.radius;
                 if (d2 < min * min && d2 > 0) {
                     const d = Math.sqrt(d2);
-                    const ov = (min - d) * 0.5;
+                    const ov = (min - d) * 0.5 * smoothRate;
                     const nx = dx / d;
                     const ny = dy / d;
                     e1.pushX -= nx * ov;
